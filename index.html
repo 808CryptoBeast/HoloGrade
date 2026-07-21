@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HoloGrade - Pokemon Card Scanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="topbar">
+      <div>
+        <h1>HoloGrade</h1>
+        <p>Scan, grade, and organize your Pokemon collection in custom binders.</p>
+      </div>
+      <button id="themeBtn" class="btn ghost small" type="button" aria-label="Cycle theme">Theme</button>
+    </header>
+
+    <nav class="tabs" aria-label="Main navigation">
+      <button class="tab active" data-tab="dashboard" type="button">Dashboard</button>
+      <button class="tab" data-tab="scan" type="button">Scan</button>
+      <button class="tab" data-tab="portfolio" type="button">Portfolio</button>
+      <button class="tab" data-tab="collection" type="button">Collection</button>
+      <button class="tab" data-tab="customize" type="button">Customize</button>
+    </nav>
+
+    <main>
+      <section id="tab-dashboard" class="tab-panel active" aria-labelledby="dashboard-tab">
+        <div class="dashboard-grid">
+          <div class="panel hero-panel">
+            <div class="row-between">
+              <div>
+                <h2>Collector Dashboard</h2>
+                <p class="muted">Start here for market pulse, collection totals, and your top binder activity.</p>
+              </div>
+              <button id="refreshNewsBtn" class="btn ghost small" type="button">Refresh News</button>
+            </div>
+            <div id="dashboardSummary" class="summary"></div>
+            <div id="dashboardSpotlight" class="portfolio-highlights"></div>
+          </div>
+
+          <div class="panel news-panel">
+            <div class="row-between">
+              <h2>Pokemon TCG News</h2>
+              <span id="newsStatus" class="badge">Loading</span>
+            </div>
+            <div id="newsFeed" class="news-feed"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-scan" class="tab-panel" aria-labelledby="scan-tab">
+        <div class="panel">
+          <h2>Card Scan</h2>
+          <p class="muted">Use your phone camera or upload a photo. We estimate condition and try to identify the card.</p>
+
+          <div id="cameraBox" class="camera-box hidden">
+            <video id="cameraVideo" playsinline autoplay muted></video>
+            <div class="camera-overlay"></div>
+            <div class="camera-actions">
+              <button id="cancelCameraBtn" class="btn ghost" type="button">Cancel</button>
+              <button id="captureBtn" class="btn primary" type="button">Capture</button>
+            </div>
+          </div>
+
+          <div id="scanStart" class="scan-start">
+            <button id="startCameraBtn" class="btn primary" type="button">Open Camera</button>
+            <label class="btn ghost" for="uploadInput">Upload Photo</label>
+            <input id="uploadInput" type="file" accept="image/*" hidden />
+          </div>
+
+          <div id="previewWrap" class="preview-wrap hidden">
+            <img id="previewImage" alt="Scanned card preview" />
+            <div class="preview-actions">
+              <button id="analyzeBtn" class="btn primary" type="button">Analyze Card</button>
+              <button id="resetScanBtn" class="btn ghost" type="button">Reset</button>
+            </div>
+          </div>
+
+          <div id="scanStatus" class="status" aria-live="polite"></div>
+        </div>
+
+        <div id="resultPanel" class="panel hidden">
+          <h2>Analysis Result</h2>
+
+          <div class="grade-card">
+            <div>
+              <h3 id="resultName">Unknown Card</h3>
+              <p id="resultMeta" class="muted">No card details yet</p>
+            </div>
+            <div class="grade-pill">
+              <span>EST</span>
+              <strong id="resultGrade">-</strong>
+            </div>
+          </div>
+
+          <div class="score-list" id="scoreList"></div>
+
+          <div id="analysisValues" class="summary compact-summary"></div>
+
+          <div class="result-grid">
+            <label>
+              Card Name
+              <input id="editName" type="text" placeholder="e.g. Charizard" />
+            </label>
+            <label>
+              Set
+              <input id="editSet" type="text" placeholder="e.g. Base Set" />
+            </label>
+            <label>
+              Number
+              <input id="editNumber" type="text" placeholder="e.g. 4/102" />
+            </label>
+            <label>
+              Rarity
+              <input id="editRarity" type="text" placeholder="e.g. Holo Rare" />
+            </label>
+            <label>
+              Purchase Price (optional)
+              <input id="editPurchase" type="number" min="0" step="0.01" placeholder="0.00" />
+            </label>
+            <label>
+              Binder
+              <select id="editBinder"></select>
+            </label>
+          </div>
+
+          <div class="result-actions">
+            <button id="saveCardBtn" class="btn primary" type="button">Add To Binder</button>
+            <button id="scanAnotherBtn" class="btn ghost" type="button">Scan Another</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-portfolio" class="tab-panel" aria-labelledby="portfolio-tab">
+        <div class="panel">
+          <div class="row-between">
+            <h2>My Portfolio</h2>
+            <button id="saveProfileBtn" class="btn primary small" type="button">Save Profile</button>
+          </div>
+          <p class="muted">Track your collection performance and personalize your collector profile.</p>
+
+          <div class="profile-grid">
+            <label>
+              Collector Name
+              <input id="profileName" type="text" placeholder="Your collector name" />
+            </label>
+            <label>
+              Favorite Pokemon
+              <input id="profileFavorite" type="text" placeholder="e.g. Gengar" />
+            </label>
+            <label class="full-width">
+              Bio
+              <input id="profileBio" type="text" placeholder="Short profile bio" />
+            </label>
+          </div>
+
+          <div id="portfolioStats" class="summary"></div>
+          <div id="portfolioHighlights" class="portfolio-highlights"></div>
+          <div id="portfolioBinderBreakdown" class="binder-breakdown"></div>
+        </div>
+      </section>
+
+      <section id="tab-collection" class="tab-panel" aria-labelledby="collection-tab">
+        <div class="panel">
+          <div class="row-between">
+            <h2>Collection</h2>
+            <span id="collectionCount" class="badge">0 cards</span>
+          </div>
+
+          <div class="filters">
+            <input id="searchInput" type="text" placeholder="Search name, set, number..." />
+            <select id="sortSelect">
+              <option value="binder">Binder Order (drag & drop)</option>
+              <option value="newest">Newest</option>
+              <option value="grade">Grade (high to low)</option>
+              <option value="name">Name (A-Z)</option>
+            </select>
+            <select id="binderFilter"></select>
+          </div>
+
+          <div id="collectionSummary" class="summary"></div>
+          <div id="binderShelf" class="binder-shelf"></div>
+        </div>
+      </section>
+
+      <section id="tab-customize" class="tab-panel" aria-labelledby="customize-tab">
+        <div class="panel">
+          <div class="row-between">
+            <h2>Customize</h2>
+            <button id="newBinderBtn" class="btn primary small" type="button">New Binder</button>
+          </div>
+          <p class="muted">Customize binder cover, sleeve color, page style, and card layout per binder.</p>
+          <div id="binderManager" class="binder-manager"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <template id="cardItemTemplate">
+    <article class="card-item">
+      <img class="thumb" alt="Card thumbnail" />
+      <div class="card-main">
+        <h4 class="nm"></h4>
+        <p class="meta"></p>
+        <div class="card-tags"></div>
+      </div>
+      <div class="card-side">
+        <span class="grade-chip"></span>
+        <select class="move-page-select" aria-label="Move card to page"></select>
+        <button class="btn ghost small move-page" type="button">Move</button>
+        <button class="btn ghost small delete-card" type="button">Remove</button>
+      </div>
+    </article>
+  </template>
+
+  <template id="newsItemTemplate">
+    <article class="news-item">
+      <a class="news-image-link" target="_blank" rel="noopener noreferrer">
+        <img class="news-image" alt="Article image" />
+      </a>
+      <div class="news-copy">
+        <p class="news-meta"></p>
+        <h3><a class="news-title-link" target="_blank" rel="noopener noreferrer"></a></h3>
+        <p class="news-summary"></p>
+      </div>
+    </article>
+  </template>
+
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
