@@ -458,6 +458,9 @@ select {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
+  padding: 8px;
+  position: relative;
+  border-radius: 16px;
 }
 
 .binder-book-slot {
@@ -820,6 +823,51 @@ select {
   font-size: 12px;
 }
 
+.page-scene-panel {
+  position: relative;
+  border-radius: 14px;
+  overflow: hidden;
+  min-height: 100%;
+  background-size: cover;
+  background-position: center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12), 0 12px 30px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  justify-content: end;
+  padding: 10px;
+  z-index: 2;
+}
+
+.page-scene-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent 38%, rgba(0,0,0,0.28));
+  pointer-events: none;
+}
+
+.page-scene-panel > * {
+  position: relative;
+  z-index: 1;
+}
+
+.page-scene-kicker {
+  display: inline-flex;
+  align-self: start;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.36);
+  font-size: 11px;
+  color: rgba(255,255,255,0.86);
+  margin-bottom: 6px;
+}
+
+.page-scene-panel strong {
+  font-size: 14px;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
 .card-list {
   padding: 8px 10px 12px;
 }
@@ -1075,6 +1123,91 @@ select {
   background: rgba(0, 0, 0, 0.44);
   font-size: 12px;
   letter-spacing: 0.03em;
+}
+
+.panel-template-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.panel-layout-editor {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  min-height: 220px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.14));
+  position: relative;
+}
+
+.panel-layout-cell {
+  aspect-ratio: 2.5 / 3.5;
+  border: 1px dashed rgba(255,255,255,0.14);
+  border-radius: 10px;
+  color: rgba(255,255,255,0.28);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+}
+
+.panel-layout-scene {
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 12px;
+  background-size: cover;
+  background-position: center;
+  background-color: rgba(0,0,0,0.15);
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: end;
+  justify-content: start;
+  padding: 10px;
+  color: var(--text);
+  overflow: hidden;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.2);
+  cursor: grab;
+}
+
+.panel-layout-scene.dragging {
+  opacity: 0.9;
+  cursor: grabbing;
+}
+
+.panel-layout-scene span {
+  background: rgba(0,0,0,0.42);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.panel-config-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.panel-config-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(255,255,255,0.03);
+}
+
+.panel-config-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.page-scene-panel.book {
+  min-height: auto;
 }
 
 .page-style-actions {
@@ -1349,6 +1482,10 @@ select {
 
   .sticker-preset-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .panel-template-actions {
+    flex-direction: column;
   }
 
   .card-detail-hero {

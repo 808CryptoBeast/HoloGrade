@@ -17,6 +17,28 @@ const PAGE_METHOD_PRESETS = {
   energy: { label: "Energy Burst", patternStyle: "lava", pageTint: "#21131a", sleeveColor: "#ffb36a", patternStrength: 80 },
 };
 
+const PAGE_LAYOUT_PRESETS = {
+  grid: { label: "Full Grid", panels: [] },
+  topHero: {
+    label: "Top Hero",
+    panels: [{ anchor: 2, colSpan: 2, rowSpan: 1, title: "Hero Art" }],
+  },
+  middleHero: {
+    label: "Middle Hero",
+    panels: [{ anchor: 4, colSpan: 2, rowSpan: 1, title: "Scene Art" }],
+  },
+  tallStory: {
+    label: "Tall Story",
+    panels: [{ anchor: 3, colSpan: 1, rowSpan: 2, title: "Vertical Art" }],
+  },
+};
+
+const SCENE_PANEL_TEMPLATES = {
+  wide: { label: "Wide Panel", colSpan: 2, rowSpan: 1, anchor: 2, title: "Scene Art" },
+  tall: { label: "Tall Panel", colSpan: 1, rowSpan: 2, anchor: 3, title: "Vertical Art" },
+  square: { label: "Square Panel", colSpan: 1, rowSpan: 1, anchor: 5, title: "Detail Art" },
+};
+
 const STICKER_PRESETS = {
   star: { label: "Star", fill: "#ffe27a", stroke: "#fff6c1", path: "M50 8 L61 36 L91 36 L67 54 L76 84 L50 67 L24 84 L33 54 L9 36 L39 36 Z" },
   spark: { label: "Spark", fill: "#8de9ff", stroke: "#d8fbff", path: "M50 4 L58 34 L88 42 L58 50 L50 96 L42 50 L12 42 L42 34 Z" },
@@ -195,6 +217,7 @@ const runtime = {
   openBinders: {},
   pageDoodles: {},
   decorationDrag: null,
+  panelDrag: null,
   editor: {
     open: false,
     binderId: null,
@@ -1006,9 +1029,16 @@ function renderCollection() {
     applyPageThemeToGrid(grid, pageTheme, pageDoodle);
     renderPageDecorations(grid, binder, currentPage);
 
+    const reservedSlots = getReservedSlotsForTheme(pageTheme);
     const placedCards = allCardsOnPage.filter((card) => Number(card.slotOrder) >= 1 && Number(card.slotOrder) <= 9);
     for (let i = 0; i < 9; i += 1) {
       const slotNumber = i + 1;
+      if (renderPageLayoutItem(grid, slotNumber, pageTheme)) {
+        continue;
+      }
+      if (reservedSlots.has(slotNumber)) {
+        continue;
+      }
       const slotCard = placedCards.find((card) => Number(card.slotOrder) === slotNumber);
       const slot = document.createElement("div");
       slot.className = "slot";
@@ -1175,7 +1205,14 @@ function renderBinderBook() {
 
 function renderBinderBookGrid(target, cards, page, binder) {
   target.innerHTML = "";
+  const pageTheme = getPageTheme(binder, page);
+  const pageDoodle = getPageDoodlePattern(pageTheme.patternStyle || binder.style, page, pageTheme.patternStrength);
+  applyPageThemeToGrid(target, pageTheme, pageDoodle);
+  renderPageScenePanels(target, pageTheme, { mode: "book" });
+  renderPageDecorations(target, binder, page);
+  const reservedSlots = getReservedSlotsForTheme(pageTheme);
   for (let slotNumber = 1; slotNumber <= 9; slotNumber += 1) {
+    if (reservedSlots.has(slotNumber)) continue;
     const card = cards.find((item) => Number(item.slotOrder || 0) === slotNumber);
     const slot = document.createElement("div");
     slot.className = `binder-book-slot${card ? "" : " empty"}`;
@@ -1209,6 +1246,8 @@ function getPageTheme(binder, page) {
   const fallbackMethod = cleanText(binder.pageMethodDefault) || "classic";
   const fallbackPreset = PAGE_METHOD_PRESETS[fallbackMethod] || PAGE_METHOD_PRESETS.classic;
   const fromMap = binder.pageThemes?.[String(page)] || {};
+  const legacyLayoutPreset = cleanText(fromMap.layoutPreset) || "grid";
+  const legacySceneImage = cleanText(fromMap.sceneImage);
 
   return {
     method: cleanText(fromMap.method) || fallbackMethod,
@@ -1218,6 +1257,13 @@ function getPageTheme(binder, page) {
     patternStrength: clamp(Number(fromMap.patternStrength || fallbackPreset.patternStrength || 45), 8, 100),
     backgroundImage: cleanText(fromMap.backgroundImage),
     designTitle: cleanText(fromMap.designTitle),
+    layoutPreset: legacyLayoutPreset,
+    sceneImage: legacySceneImage,
+    scenePanels: normalizeScenePanels(fromMap.scenePanels, {
+      layoutPreset: legacyLayoutPreset,
+      sceneImage: legacySceneImage,
+      designTitle: cleanText(fromMap.designTitle),
+    }),
     decorations: normalizeDecorations(fromMap.decorations),
   };
 }
@@ -1235,6 +1281,9 @@ function upsertPageTheme(binder, page) {
     patternStrength: current.patternStrength,
     backgroundImage: current.backgroundImage,
     designTitle: current.designTitle,
+    layoutPreset: current.layoutPreset,
+    sceneImage: current.sceneImage,
+    scenePanels: normalizeScenePanels(current.scenePanels, current),
     decorations: normalizeDecorations(current.decorations),
   };
   return binder.pageThemes[String(page)];
@@ -1242,6 +1291,255 @@ function upsertPageTheme(binder, page) {
 
 function getPageMethodLabel(method) {
   return PAGE_METHOD_PRESETS[method]?.label || "Custom";
+}
+
+function getPageLayout(theme) {
+  return PAGE_LAYOUT_PRESETS[theme?.layoutPreset] || PAGE_LAYOUT_PRESETS.grid;
+}
+
+function matchesPanelTemplate(panel, template) {
+  return Number(panel?.colSpan || 1) === Number(template?.colSpan || 1)
+    && Number(panel?.rowSpan || 1) === Number(template?.rowSpan || 1);
+}
+
+function createScenePanelFromTemplate(template, theme = {}) {
+  const base = {
+    id: cryptoRandom(),
+    anchor: clamp(Number(template?.anchor) || 1, 1, 9),
+    colSpan: clamp(Number(template?.colSpan) || 1, 1, 3),
+    rowSpan: clamp(Number(template?.rowSpan) || 1, 1, 3),
+    title: cleanText(template?.title) || cleanText(theme.designTitle) || "Scene Art",
+    image: "",
+  };
+  base.anchor = findNearestValidPanelAnchor(theme, null, base.anchor, base);
+  return base;
+}
+
+function normalizeScenePanels(scenePanels, legacy = {}) {
+  const list = Array.isArray(scenePanels) && scenePanels.length
+    ? scenePanels
+    : buildLegacyScenePanels(legacy);
+
+  return list
+    .map((panel, index) => normalizeScenePanel(panel, index))
+    .filter(Boolean);
+}
+
+function buildLegacyScenePanels(legacy) {
+  const preset = PAGE_LAYOUT_PRESETS[legacy.layoutPreset] || PAGE_LAYOUT_PRESETS.grid;
+  if (!preset.panels.length) return [];
+  return preset.panels.map((panel, index) => ({
+    id: `legacy-panel-${index}`,
+    anchor: panel.anchor,
+    colSpan: panel.colSpan,
+    rowSpan: panel.rowSpan,
+    title: cleanText(legacy.designTitle) || panel.title || "Scene Art",
+    image: cleanText(legacy.sceneImage),
+  }));
+}
+
+function normalizeScenePanel(panel, index) {
+  if (!panel || typeof panel !== "object") return null;
+  const normalized = {
+    id: cleanText(panel.id) || `panel-${index}-${Math.floor(Math.random() * 1e6)}`,
+    anchor: clamp(Number(panel.anchor) || 1, 1, 9),
+    colSpan: clamp(Number(panel.colSpan) || 1, 1, 3),
+    rowSpan: clamp(Number(panel.rowSpan) || 1, 1, 3),
+    title: cleanText(panel.title) || "Scene Art",
+    image: cleanText(panel.image),
+  };
+  const covered = getPanelCoveredSlots(normalized);
+  return covered.length ? normalized : null;
+}
+
+function isPanelPlacementValid(existingPanels, panel, panelIdToIgnore = null) {
+  const covered = getPanelCoveredSlots(panel);
+  if (covered.length !== Number(panel.colSpan || 1) * Number(panel.rowSpan || 1)) return false;
+  const occupied = new Set();
+  existingPanels.forEach((item) => {
+    if (panelIdToIgnore && item.id === panelIdToIgnore) return;
+    getPanelCoveredSlots(item).forEach((slot) => occupied.add(slot));
+  });
+  return covered.every((slot) => !occupied.has(slot));
+}
+
+function findNearestValidPanelAnchor(theme, panelId, preferredAnchor, template) {
+  const existing = normalizeScenePanels(theme?.scenePanels, theme).filter((panel) => panel.id !== panelId);
+  const preferred = clamp(Number(preferredAnchor) || 1, 1, 9);
+  const candidates = Array.from({ length: 9 }, (_, index) => index + 1)
+    .sort((a, b) => Math.abs(a - preferred) - Math.abs(b - preferred));
+
+  for (const anchor of candidates) {
+    const candidate = {
+      ...template,
+      anchor,
+      colSpan: clamp(Number(template?.colSpan) || 1, 1, 3),
+      rowSpan: clamp(Number(template?.rowSpan) || 1, 1, 3),
+    };
+    if (isPanelPlacementValid(existing, candidate)) {
+      return anchor;
+    }
+  }
+
+  return preferred;
+}
+
+function getPanelCoveredSlots(panel) {
+  const covered = [];
+  const anchor = Number(panel.anchor || 1);
+  const startRow = Math.ceil(anchor / 3);
+  const startCol = ((anchor - 1) % 3) + 1;
+  for (let rowOffset = 0; rowOffset < Number(panel.rowSpan || 1); rowOffset += 1) {
+    for (let colOffset = 0; colOffset < Number(panel.colSpan || 1); colOffset += 1) {
+      const row = startRow + rowOffset;
+      const col = startCol + colOffset;
+      if (row < 1 || row > 3 || col < 1 || col > 3) continue;
+      covered.push((row - 1) * 3 + col);
+    }
+  }
+  return covered;
+}
+
+function getReservedSlotsForTheme(theme) {
+  return new Set(normalizeScenePanels(theme?.scenePanels, theme).flatMap((panel) => getPanelCoveredSlots(panel)));
+}
+
+function getAvailableSlotsForTheme(theme) {
+  const reserved = getReservedSlotsForTheme(theme);
+  return Array.from({ length: 9 }, (_, index) => index + 1).filter((slot) => !reserved.has(slot));
+}
+
+function renderPageLayoutItem(grid, slotNumber, pageTheme) {
+  const panel = pageTheme.scenePanels.find((item) => Number(item.anchor) === Number(slotNumber));
+  if (!panel) return false;
+  const scene = createScenePanelNode(pageTheme, panel, { mode: "collection" });
+  grid.appendChild(scene);
+  return true;
+}
+
+function buildScenePanelBackground(pageTheme, panel) {
+  const layers = [getMethodOverlay(pageTheme.method)];
+  if (panel?.image) {
+    layers.push(`url(${panel.image})`);
+  } else if (pageTheme.sceneImage) {
+    layers.push(`url(${pageTheme.sceneImage})`);
+  } else if (pageTheme.backgroundImage) {
+    layers.push(`url(${pageTheme.backgroundImage})`);
+  }
+  layers.push("linear-gradient(160deg, rgba(255,255,255,0.08), rgba(0,0,0,0.12))");
+  return layers.join(", ");
+}
+
+function createScenePanelNode(pageTheme, panel, options = {}) {
+  const scene = document.createElement(options.mode === "book" ? "div" : "div");
+  scene.className = `page-scene-panel${options.mode === "book" ? " book" : ""}`;
+  scene.dataset.panelId = panel.id;
+  scene.dataset.anchor = String(panel.anchor);
+  scene.style.gridColumn = `span ${Number(panel.colSpan || 1)}`;
+  scene.style.gridRow = `span ${Number(panel.rowSpan || 1)}`;
+  scene.style.backgroundImage = buildScenePanelBackground(pageTheme, panel);
+  scene.innerHTML = `
+    <span class="page-scene-kicker">${escapeHtml(panel.title || "Scene Art")}</span>
+    <strong>${escapeHtml(panel.title || pageTheme.designTitle || getPageMethodLabel(pageTheme.method))}</strong>
+  `;
+  return scene;
+}
+
+function renderPageScenePanels(grid, pageTheme, options = {}) {
+  pageTheme.scenePanels.forEach((panel) => {
+    const scene = createScenePanelNode(pageTheme, panel, options);
+    grid.appendChild(scene);
+  });
+}
+
+function renderPanelLayoutEditor(target, binder, page) {
+  if (!target || !binder) return;
+  const theme = getPageTheme(binder, page);
+  target.innerHTML = "";
+
+  for (let slot = 1; slot <= 9; slot += 1) {
+    const cell = document.createElement("div");
+    cell.className = "panel-layout-cell";
+    cell.textContent = String(slot);
+    target.appendChild(cell);
+  }
+
+  theme.scenePanels.forEach((panel) => {
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = "panel-layout-scene";
+    node.dataset.panelId = panel.id;
+    node.style.gridColumn = `${((panel.anchor - 1) % 3) + 1} / span ${panel.colSpan}`;
+    node.style.gridRow = `${Math.ceil(panel.anchor / 3)} / span ${panel.rowSpan}`;
+    node.style.backgroundImage = buildScenePanelBackground(theme, panel);
+    node.innerHTML = `<span>${escapeHtml(panel.title || "Scene Art")}</span>`;
+    node.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      startScenePanelDrag(event, target, binder.id, page, panel.id);
+    });
+    target.appendChild(node);
+  });
+}
+
+function startScenePanelDrag(event, editor, binderId, page, panelId) {
+  const binder = state.binders.find((item) => item.id === binderId);
+  if (!binder) return;
+  const theme = getPageTheme(binder, page);
+  const panel = theme.scenePanels.find((item) => item.id === panelId);
+  if (!panel) return;
+  const pointerId = event.pointerId;
+  const node = event.currentTarget;
+  const rect = editor.getBoundingClientRect();
+  runtime.panelDrag = { binderId, page, panelId, pointerId };
+  node.setPointerCapture(pointerId);
+  node.classList.add("dragging");
+
+  const onMove = (moveEvent) => {
+    if (!runtime.panelDrag || runtime.panelDrag.pointerId !== moveEvent.pointerId) return;
+    const dx = moveEvent.clientX - event.clientX;
+    const dy = moveEvent.clientY - event.clientY;
+    node.style.transform = `translate(${dx}px, ${dy}px)`;
+  };
+
+  const onEnd = (endEvent) => {
+    if (!runtime.panelDrag || runtime.panelDrag.pointerId !== endEvent.pointerId) return;
+    const anchor = anchorFromPoint(rect, endEvent.clientX, endEvent.clientY);
+    moveScenePanelToAnchor(binderId, page, panelId, anchor);
+    runtime.panelDrag = null;
+    node.classList.remove("dragging");
+    node.style.transform = "";
+    node.releasePointerCapture(pointerId);
+    node.removeEventListener("pointermove", onMove);
+    node.removeEventListener("pointerup", onEnd);
+    node.removeEventListener("pointercancel", onEnd);
+  };
+
+  node.addEventListener("pointermove", onMove);
+  node.addEventListener("pointerup", onEnd);
+  node.addEventListener("pointercancel", onEnd);
+}
+
+function anchorFromPoint(rect, clientX, clientY) {
+  const col = clamp(Math.floor(((clientX - rect.left) / rect.width) * 3) + 1, 1, 3);
+  const row = clamp(Math.floor(((clientY - rect.top) / rect.height) * 3) + 1, 1, 3);
+  return (row - 1) * 3 + col;
+}
+
+function moveScenePanelToAnchor(binderId, page, panelId, preferredAnchor) {
+  const binder = state.binders.find((item) => item.id === binderId);
+  if (!binder) return;
+  const theme = upsertPageTheme(binder, page);
+  theme.scenePanels = theme.scenePanels.map((panel) => {
+    if (panel.id !== panelId) return panel;
+    return {
+      ...panel,
+      anchor: findNearestValidPanelAnchor(theme, panelId, preferredAnchor, panel),
+    };
+  });
+  rebalancePageForLayout(binderId, page);
+  persist();
+  renderCollection();
+  renderBinderManager();
 }
 
 function applyPageThemeToGrid(grid, pageTheme, pageDoodle) {
@@ -1487,7 +1785,7 @@ function renderCardItem(card, context) {
     const currentPage = Number(card.page || 1);
     if (targetPage === currentPage) return;
 
-    if (countCardsInPage(card.binderId, targetPage) >= 9) {
+    if (countCardsInPage(card.binderId, targetPage) >= getPageCapacity(card.binderId, targetPage)) {
       status(`Page ${targetPage} is full. Move a card out first.`);
       return;
     }
@@ -1600,7 +1898,15 @@ function renderBinderEditor() {
   });
 
   els.editorSlotGrid.innerHTML = "";
+  const pageTheme = getPageTheme(binder, page);
+  const reservedSlots = getReservedSlotsForTheme(pageTheme);
   for (let slotNumber = 1; slotNumber <= 9; slotNumber += 1) {
+    if (renderPageLayoutItem(els.editorSlotGrid, slotNumber, pageTheme)) {
+      continue;
+    }
+    if (reservedSlots.has(slotNumber)) {
+      continue;
+    }
     const slot = document.createElement("button");
     slot.type = "button";
     slot.className = "editor-slot";
@@ -1912,6 +2218,36 @@ function renderBinderManager() {
       const page = i + 1;
       return `<option value="${page}" ${page === customPage ? "selected" : ""}>Page ${page}</option>`;
     }).join("");
+    const layoutOptions = Object.entries(PAGE_LAYOUT_PRESETS)
+      .map(([key, preset]) => `<option value="${key}" ${key === customTheme.layoutPreset ? "selected" : ""}>${escapeHtml(preset.label)}</option>`)
+      .join("");
+    const panelButtons = Object.entries(SCENE_PANEL_TEMPLATES)
+      .map(([key, template]) => `<button class="btn ghost small" type="button" data-action="add-panel" data-panel-template="${key}">${escapeHtml(template.label)}</button>`)
+      .join("");
+    const panelCards = customTheme.scenePanels.map((panel, index) => `
+      <div class="panel-config-card" data-panel-id="${panel.id}">
+        <div class="panel-config-head">
+          <strong>Panel ${index + 1}</strong>
+          <button class="btn ghost small" type="button" data-action="remove-panel" data-panel-id="${panel.id}">Remove</button>
+        </div>
+        <label>
+          Panel title
+          <input type="text" value="${escapeAttr(panel.title || "")}" data-action="panel-title" data-panel-id="${panel.id}" />
+        </label>
+        <label>
+          Panel shape
+          <select data-action="panel-shape" data-panel-id="${panel.id}">
+            ${Object.entries(SCENE_PANEL_TEMPLATES)
+              .map(([key, template]) => `<option value="${key}" ${matchesPanelTemplate(panel, template) ? "selected" : ""}>${escapeHtml(template.label)}</option>`)
+              .join("")}
+          </select>
+        </label>
+        <label>
+          Panel art
+          <input type="file" accept="image/*" data-action="panel-image" data-panel-id="${panel.id}" />
+        </label>
+      </div>
+    `).join("");
     const stickerButtons = Object.entries(STICKER_PRESETS)
       .map(([key, preset]) => `
         <button class="sticker-preset" type="button" data-action="add-sticker" data-sticker="${key}">
@@ -2009,10 +2345,17 @@ function renderBinderManager() {
             Design title
             <input type="text" value="${escapeAttr(customTheme.designTitle || "")}" data-action="theme-title" placeholder="e.g. Neon Sakura" />
           </label>
+          <label>
+            Scene panel art
+            <input type="file" accept="image/*" data-action="theme-scene-image" />
+          </label>
         </div>
         <div class="page-style-preview" style="background-image:${buildPagePreviewBackground(customTheme)}">
           <span>${escapeHtml(customTheme.designTitle || `${getPageMethodLabel(customTheme.method)} Page ${customPage}`)}</span>
         </div>
+        <div class="panel-template-actions">${panelButtons}</div>
+        <div class="panel-layout-editor" data-binder-id="${binder.id}" data-page="${customPage}"></div>
+        <div class="panel-config-list">${panelCards || '<p class="muted">No scene panels yet. Add one and drag it on the preview grid.</p>'}</div>
         <div class="sticker-preset-grid">${stickerButtons}</div>
         <div class="sub-grid compact-controls">
           <label>
@@ -2050,12 +2393,19 @@ function renderBinderManager() {
     const themeStrengthInput = wrap.querySelector('input[data-action="theme-strength"]');
     const themeImageInput = wrap.querySelector('input[data-action="theme-image"]');
     const themeTitleInput = wrap.querySelector('input[data-action="theme-title"]');
+    const themeSceneImageInput = wrap.querySelector('input[data-action="theme-scene-image"]');
     const themeClearImageBtn = wrap.querySelector('button[data-action="theme-clear-image"]');
     const themeStickerSizeInput = wrap.querySelector('input[data-action="theme-sticker-size"]');
     const themeStickerColorInput = wrap.querySelector('input[data-action="theme-sticker-color"]');
     const themeClearStickersBtn = wrap.querySelector('button[data-action="theme-clear-stickers"]');
     const themeApplyAllBtn = wrap.querySelector('button[data-action="theme-apply-all"]');
     const stickerPresetButtons = wrap.querySelectorAll('button[data-action="add-sticker"]');
+    const panelAddButtons = wrap.querySelectorAll('button[data-action="add-panel"]');
+    const panelRemoveButtons = wrap.querySelectorAll('button[data-action="remove-panel"]');
+    const panelTitleInputs = wrap.querySelectorAll('input[data-action="panel-title"]');
+    const panelShapeSelects = wrap.querySelectorAll('select[data-action="panel-shape"]');
+    const panelImageInputs = wrap.querySelectorAll('input[data-action="panel-image"]');
+    const panelLayoutEditor = wrap.querySelector('.panel-layout-editor');
 
     renameInput.addEventListener("change", () => {
       const newName = cleanText(renameInput.value);
@@ -2211,6 +2561,23 @@ function renderBinderManager() {
       status(`Updated Michi page art for ${binder.name} page ${page}.`);
     });
 
+    themeSceneImageInput.addEventListener("change", async () => {
+      const file = themeSceneImageInput.files?.[0];
+      if (!file) return;
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      const firstPanel = theme.scenePanels[0];
+      if (!firstPanel) {
+        status("Add a scene panel first, then upload panel art.");
+        return;
+      }
+      firstPanel.image = await resizeImageFile(file, 1600, 0.84);
+      persist();
+      renderCollection();
+      renderBinderManager();
+      status(`Updated scene panel art for ${binder.name} page ${page}.`);
+    });
+
     themeTitleInput.addEventListener("change", () => {
       const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
       const theme = upsertPageTheme(binder, page);
@@ -2228,6 +2595,74 @@ function renderBinderManager() {
       renderCollection();
       renderBinderManager();
     });
+
+    panelAddButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+        const theme = upsertPageTheme(binder, page);
+        const template = SCENE_PANEL_TEMPLATES[button.dataset.panelTemplate] || SCENE_PANEL_TEMPLATES.square;
+        const panel = createScenePanelFromTemplate(template, theme);
+        theme.scenePanels = [...theme.scenePanels, panel];
+        rebalancePageForLayout(binder.id, page);
+        persist();
+        renderCollection();
+        renderBinderManager();
+      });
+    });
+
+    panelRemoveButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+        const theme = upsertPageTheme(binder, page);
+        theme.scenePanels = theme.scenePanels.filter((panel) => panel.id !== button.dataset.panelId);
+        rebalancePageForLayout(binder.id, page);
+        persist();
+        renderCollection();
+        renderBinderManager();
+      });
+    });
+
+    panelTitleInputs.forEach((input) => {
+      input.addEventListener("change", () => {
+        const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+        const theme = upsertPageTheme(binder, page);
+        theme.scenePanels = theme.scenePanels.map((panel) => panel.id === input.dataset.panelId ? { ...panel, title: cleanText(input.value) || panel.title } : panel);
+        persist();
+        renderCollection();
+        renderBinderManager();
+      });
+    });
+
+    panelShapeSelects.forEach((select) => {
+      select.addEventListener("change", () => {
+        const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+        const theme = upsertPageTheme(binder, page);
+        const template = SCENE_PANEL_TEMPLATES[select.value] || SCENE_PANEL_TEMPLATES.square;
+        theme.scenePanels = theme.scenePanels.map((panel) => panel.id === select.dataset.panelId
+          ? { ...panel, colSpan: template.colSpan, rowSpan: template.rowSpan, anchor: findNearestValidPanelAnchor(theme, panel.id, panel.anchor, template) }
+          : panel);
+        rebalancePageForLayout(binder.id, page);
+        persist();
+        renderCollection();
+        renderBinderManager();
+      });
+    });
+
+    panelImageInputs.forEach((input) => {
+      input.addEventListener("change", async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+        const theme = upsertPageTheme(binder, page);
+        const image = await resizeImageFile(file, 1600, 0.84);
+        theme.scenePanels = theme.scenePanels.map((panel) => panel.id === input.dataset.panelId ? { ...panel, image } : panel);
+        persist();
+        renderCollection();
+        renderBinderManager();
+      });
+    });
+
+    renderPanelLayoutEditor(panelLayoutEditor, binder, customPage);
 
     stickerPresetButtons.forEach((button) => {
       button.addEventListener("click", () => {
@@ -2293,6 +2728,9 @@ function renderBinderManager() {
           patternStrength: source.patternStrength,
           backgroundImage: source.backgroundImage,
           designTitle: source.designTitle,
+          layoutPreset: source.layoutPreset,
+          sceneImage: source.sceneImage,
+          scenePanels: normalizeScenePanels(source.scenePanels, source),
           decorations: normalizeDecorations(source.decorations),
         };
       }
@@ -2421,6 +2859,9 @@ function normalizePagingState() {
           patternStrength: clamp(Number(theme?.patternStrength || 45), 8, 100),
           backgroundImage: cleanText(theme?.backgroundImage),
           designTitle: cleanText(theme?.designTitle),
+          layoutPreset: cleanText(theme?.layoutPreset) || "grid",
+          sceneImage: cleanText(theme?.sceneImage),
+          scenePanels: normalizeScenePanels(theme?.scenePanels, theme),
           decorations: normalizeDecorations(theme?.decorations),
         }]),
       )
@@ -2513,7 +2954,7 @@ function findPageWithSpace(binderId) {
   if (!binder) return 1;
 
   for (let page = 1; page <= binder.pages; page += 1) {
-    if (countCardsInPage(binderId, page) < 9) {
+    if (countCardsInPage(binderId, page) < getPageCapacity(binderId, page)) {
       return page;
     }
   }
@@ -2526,16 +2967,24 @@ function countCardsInPage(binderId, page) {
   return state.cards.filter((card) => card.binderId === binderId && Number(card.page || 1) === page).length;
 }
 
+function getPageCapacity(binderId, page) {
+  const binder = state.binders.find((item) => item.id === binderId);
+  if (!binder) return 9;
+  return getAvailableSlotsForTheme(getPageTheme(binder, page)).length;
+}
+
 function getNextSlotOrder(binderId, page) {
+  const binder = state.binders.find((item) => item.id === binderId);
+  const available = binder ? getAvailableSlotsForTheme(getPageTheme(binder, page)) : [1, 2, 3, 4, 5, 6, 7, 8, 9];
   const taken = new Set(
     state.cards
       .filter((card) => card.binderId === binderId && Number(card.page || 1) === page)
       .map((card) => Number(card.slotOrder) || 0),
   );
-  for (let slot = 1; slot <= 9; slot += 1) {
+  for (const slot of available) {
     if (!taken.has(slot)) return slot;
   }
-  return 9;
+  return available[available.length - 1] || 9;
 }
 
 function getViewedPage(binderId, maxPage) {
@@ -2570,6 +3019,11 @@ function placeCardInSlot(cardId, binderId, page, slotNumber) {
   const currentPage = Number(moved.page || 1);
   const currentSlot = Number(moved.slotOrder || 0);
   const targetSlot = clamp(Number(slotNumber) || 1, 1, 9);
+  const binder = state.binders.find((item) => item.id === binderId);
+  if (binder && getReservedSlotsForTheme(getPageTheme(binder, page)).has(targetSlot)) {
+    status("That slot is reserved for page artwork in the current layout.");
+    return;
+  }
   const occupant = state.cards.find(
     (card) => card.id !== cardId && card.binderId === binderId && Number(card.page || 1) === Number(page) && Number(card.slotOrder || 0) === targetSlot,
   );
@@ -2590,7 +3044,7 @@ function placeCardInSlot(cardId, binderId, page, slotNumber) {
       return card;
     });
   } else {
-    if (currentBinderId !== binderId && countCardsInPage(binderId, Number(page)) >= 9) {
+    if (currentBinderId !== binderId && countCardsInPage(binderId, Number(page)) >= getPageCapacity(binderId, Number(page))) {
       status(`Page ${page} is full. Clear a slot first.`);
       return;
     }
@@ -2644,7 +3098,7 @@ function moveCardToPage(cardId, binderId, targetPage) {
     return;
   }
 
-  if (countCardsInPage(binderId, safeTarget) >= 9) {
+  if (countCardsInPage(binderId, safeTarget) >= getPageCapacity(binderId, safeTarget)) {
     status(`Page ${safeTarget} is full. Move a card out first.`);
     return;
   }
@@ -2662,6 +3116,39 @@ function moveCardToPage(cardId, binderId, targetPage) {
   persist();
   renderCollection();
   renderBinderManager();
+}
+
+function rebalancePageForLayout(binderId, page) {
+  const binder = state.binders.find((item) => item.id === binderId);
+  if (!binder) return;
+  const pageCards = sortCardsForPage(
+    state.cards.filter((card) => card.binderId === binderId && Number(card.page || 1) === Number(page)),
+    "binder",
+  );
+  const availableSlots = getAvailableSlotsForTheme(getPageTheme(binder, page));
+
+  const stayIds = new Set(pageCards.slice(0, availableSlots.length).map((card) => card.id));
+  state.cards = state.cards.map((card) => {
+    if (card.binderId !== binderId || Number(card.page || 1) !== Number(page)) return card;
+    if (!stayIds.has(card.id)) return card;
+    const idx = pageCards.findIndex((item) => item.id === card.id);
+    return {
+      ...card,
+      slotOrder: availableSlots[idx] || card.slotOrder,
+    };
+  });
+
+  pageCards.slice(availableSlots.length).forEach((card) => {
+    const targetPage = findPageWithSpace(binderId);
+    state.cards = state.cards.map((item) => {
+      if (item.id !== card.id) return item;
+      return {
+        ...item,
+        page: targetPage,
+        slotOrder: getNextSlotOrder(binderId, targetPage),
+      };
+    });
+  });
 }
 
 function normalizeSlotOrder(binderId, page) {
