@@ -1450,8 +1450,10 @@ function createScenePanelNode(pageTheme, panel, options = {}) {
   applyScenePanelBackgroundStyles(scene, pageTheme, panel);
   scene.style.zIndex = String(clamp(Number(panel.layer) || 12, 1, 40));
   scene.innerHTML = `
-    <span class="page-scene-kicker">${escapeHtml(panel.title || "Scene Art")}</span>
-    <strong>${escapeHtml(panel.title || pageTheme.designTitle || getPageMethodLabel(pageTheme.method))}</strong>
+    <div class="page-scene-copy">
+      <span class="page-scene-kicker">${escapeHtml(panel.title || "Scene Art")}</span>
+      <strong>${escapeHtml(panel.title || pageTheme.designTitle || getPageMethodLabel(pageTheme.method))}</strong>
+    </div>
   `;
 
   if (options.mode === "collection") {
@@ -2395,6 +2397,20 @@ function renderBinderManager() {
               .join("")}
           </select>
         </label>
+        <div class="panel-span-grid">
+          <label>
+            Width (cards)
+            <select data-action="panel-width" data-panel-id="${panel.id}">
+              ${[1, 2, 3].map((value) => `<option value="${value}" ${Number(panel.colSpan || 1) === value ? "selected" : ""}>${value}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            Height (cards)
+            <select data-action="panel-height" data-panel-id="${panel.id}">
+              ${[1, 2, 3].map((value) => `<option value="${value}" ${Number(panel.rowSpan || 1) === value ? "selected" : ""}>${value}</option>`).join("")}
+            </select>
+          </label>
+        </div>
         <label>
           Panel art
           <input type="file" accept="image/*" data-action="panel-image" data-panel-id="${panel.id}" />
@@ -2538,9 +2554,11 @@ function renderBinderManager() {
         <div class="page-style-preview" style="background-image:${buildPagePreviewBackground(customTheme)}">
           <span>${escapeHtml(customTheme.designTitle || `${getPageMethodLabel(customTheme.method)} Page ${customPage}`)}</span>
         </div>
+        <div class="michi-lab-note muted">Add panels, drag them on the preview grid, and resize them to claim more card spaces.</div>
         <div class="panel-template-actions">${panelButtons}</div>
         <div class="panel-layout-editor" data-binder-id="${binder.id}" data-page="${customPage}"></div>
         <div class="panel-config-list">${panelCards || '<p class="muted">No scene panels yet. Add one and drag it on the preview grid.</p>'}</div>
+        <div class="michi-lab-note muted">Stickers sit above the page art and can be dragged in the live binder page.</div>
         <div class="sticker-preset-grid">${stickerButtons}</div>
         <div class="sub-grid compact-controls">
           <label>
@@ -2592,6 +2610,8 @@ function renderBinderManager() {
     const panelRemoveButtons = wrap.querySelectorAll('button[data-action="remove-panel"]');
     const panelTitleInputs = wrap.querySelectorAll('input[data-action="panel-title"]');
     const panelShapeSelects = wrap.querySelectorAll('select[data-action="panel-shape"]');
+    const panelWidthSelects = wrap.querySelectorAll('select[data-action="panel-width"]');
+    const panelHeightSelects = wrap.querySelectorAll('select[data-action="panel-height"]');
     const panelImageInputs = wrap.querySelectorAll('input[data-action="panel-image"]');
     const panelLayerInputs = wrap.querySelectorAll('input[data-action="panel-layer"]');
     const panelZoomInputs = wrap.querySelectorAll('input[data-action="panel-zoom"]');
@@ -2856,6 +2876,48 @@ function renderBinderManager() {
         theme.scenePanels = theme.scenePanels.map((panel) => panel.id === select.dataset.panelId
           ? { ...panel, colSpan: template.colSpan, rowSpan: template.rowSpan, anchor: findNearestValidPanelAnchor(theme, panel.id, panel.anchor, template) }
           : panel);
+        rebalancePageForLayout(binder.id, page);
+        persist();
+        renderCollection();
+        renderBinderManager();
+      });
+    });
+
+    panelWidthSelects.forEach((select) => {
+      select.addEventListener("change", () => {
+        const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+        const theme = upsertPageTheme(binder, page);
+        const nextWidth = clamp(Number(select.value) || 1, 1, 3);
+        theme.scenePanels = theme.scenePanels.map((panel) => {
+          if (panel.id !== select.dataset.panelId) return panel;
+          const candidate = {
+            ...panel,
+            colSpan: nextWidth,
+            anchor: findNearestValidPanelAnchor(theme, panel.id, panel.anchor, { ...panel, colSpan: nextWidth }),
+          };
+          return isPanelPlacementValid(theme.scenePanels, candidate, panel.id) ? candidate : panel;
+        });
+        rebalancePageForLayout(binder.id, page);
+        persist();
+        renderCollection();
+        renderBinderManager();
+      });
+    });
+
+    panelHeightSelects.forEach((select) => {
+      select.addEventListener("change", () => {
+        const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+        const theme = upsertPageTheme(binder, page);
+        const nextHeight = clamp(Number(select.value) || 1, 1, 3);
+        theme.scenePanels = theme.scenePanels.map((panel) => {
+          if (panel.id !== select.dataset.panelId) return panel;
+          const candidate = {
+            ...panel,
+            rowSpan: nextHeight,
+            anchor: findNearestValidPanelAnchor(theme, panel.id, panel.anchor, { ...panel, rowSpan: nextHeight }),
+          };
+          return isPanelPlacementValid(theme.scenePanels, candidate, panel.id) ? candidate : panel;
+        });
         rebalancePageForLayout(binder.id, page);
         persist();
         renderCollection();
