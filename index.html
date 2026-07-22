@@ -101,6 +101,11 @@
 
           <div id="analysisValues" class="summary compact-summary"></div>
 
+          <div class="panel-subsection">
+            <h3>Auto Captured Card Data</h3>
+            <div id="analysisAutoInfo" class="auto-info-grid"></div>
+          </div>
+
           <div class="result-grid">
             <label>
               Card Name
@@ -252,6 +257,29 @@
       </div>
       <div class="binder-book-footer">
         <span id="binderBookPageLabel" class="badge">Pages 1-2</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="cardDetailModal" class="card-detail-modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="cardDetailTitle">
+    <div class="card-detail-shell">
+      <div class="card-detail-header">
+        <div>
+          <p id="cardDetailContext" class="book-kicker">Binder Slot</p>
+          <h2 id="cardDetailTitle">Card Details</h2>
+        </div>
+        <button id="cardDetailClose" class="btn ghost small" type="button">Close</button>
+      </div>
+      <div class="card-detail-body">
+        <div class="card-detail-hero">
+          <img id="cardDetailImage" alt="Card image" />
+          <div class="card-detail-headline">
+            <h3 id="cardDetailName">Unknown Card</h3>
+            <p id="cardDetailMeta" class="muted">Set · Number · Rarity</p>
+            <div id="cardDetailGradeRow" class="summary compact-summary"></div>
+          </div>
+        </div>
+        <div id="cardDetailFields" class="auto-info-grid"></div>
       </div>
     </div>
   </div>

@@ -10,6 +10,13 @@ const BINDER_STYLES = {
   prism: ["#f3a5ff", "#7de3ff"],
 };
 
+const PAGE_METHOD_PRESETS = {
+  classic: { label: "Classic", patternStyle: "ocean", pageTint: "#0f1d2f", sleeveColor: "#9cdfff", patternStrength: 42 },
+  michi: { label: "Michi", patternStyle: "prism", pageTint: "#121a34", sleeveColor: "#6effd4", patternStrength: 68 },
+  minimal: { label: "Minimal", patternStyle: "moss", pageTint: "#0f1920", sleeveColor: "#9cc8ff", patternStrength: 20 },
+  energy: { label: "Energy Burst", patternStyle: "lava", pageTint: "#21131a", sleeveColor: "#ffb36a", patternStrength: 80 },
+};
+
 const NEWS_CACHE_AGE_MS = 1000 * 60 * 45;
 const NEWS_RSS_URL = "https://news.google.com/rss/search?q=Pokemon%20TCG&hl=en-US&gl=US&ceid=US:en";
 
@@ -56,6 +63,7 @@ const els = {
   resultGrade: byId("resultGrade"),
   scoreList: byId("scoreList"),
   analysisValues: byId("analysisValues"),
+  analysisAutoInfo: byId("analysisAutoInfo"),
   editName: byId("editName"),
   editSet: byId("editSet"),
   editNumber: byId("editNumber"),
@@ -97,6 +105,16 @@ const els = {
   binderBookLeftGrid: byId("binderBookLeftGrid"),
   binderBookRightGrid: byId("binderBookRightGrid"),
   binderBookPageLabel: byId("binderBookPageLabel"),
+
+  cardDetailModal: byId("cardDetailModal"),
+  cardDetailClose: byId("cardDetailClose"),
+  cardDetailContext: byId("cardDetailContext"),
+  cardDetailTitle: byId("cardDetailTitle"),
+  cardDetailImage: byId("cardDetailImage"),
+  cardDetailName: byId("cardDetailName"),
+  cardDetailMeta: byId("cardDetailMeta"),
+  cardDetailGradeRow: byId("cardDetailGradeRow"),
+  cardDetailFields: byId("cardDetailFields"),
 
   binderEditor: byId("binderEditor"),
   binderEditorMeta: byId("binderEditorMeta"),
@@ -148,6 +166,7 @@ function init() {
   wirePortfolio();
   wireDashboard();
   wireBinderBook();
+  wireCardDetailModal();
   wireTopbar();
   refreshBinderSelects();
   renderResult(null);
@@ -206,6 +225,16 @@ function wireBinderBook() {
   els.binderBook.addEventListener("click", (event) => {
     if (event.target === els.binderBook) {
       closeBinderBook();
+    }
+  });
+}
+
+function wireCardDetailModal() {
+  if (!els.cardDetailModal) return;
+  els.cardDetailClose.addEventListener("click", closeCardDetailModal);
+  els.cardDetailModal.addEventListener("click", (event) => {
+    if (event.target === els.cardDetailModal) {
+      closeCardDetailModal();
     }
   });
 }
@@ -604,6 +633,26 @@ function renderResult(analysis) {
   els.editRarity.value = analysis.rarity || "";
   els.editPurchase.value = "";
 
+  renderAutoInfoGrid(els.analysisAutoInfo, analysis.autoRecord, {
+    fields: [
+      ["Card ID", analysis.autoRecord?.tcg?.id],
+      ["Set ID", analysis.autoRecord?.tcg?.setId],
+      ["Series", analysis.autoRecord?.tcg?.setSeries],
+      ["Release", analysis.autoRecord?.tcg?.releaseDate],
+      ["HP", analysis.autoRecord?.hp],
+      ["Type", joinList(analysis.autoRecord?.types)],
+      ["Subtype", joinList(analysis.autoRecord?.subtypes)],
+      ["Evolves From", analysis.autoRecord?.evolvesFrom],
+      ["Artist", analysis.autoRecord?.artist],
+      ["Reg. Mark", analysis.autoRecord?.regulationMark],
+      ["Abilities", asCountLabel(analysis.autoRecord?.abilities, "ability")],
+      ["Attacks", asCountLabel(analysis.autoRecord?.attacks, "attack")],
+      ["Rules", asCountLabel(analysis.autoRecord?.rules, "rule")],
+      ["Scan Confidence", analysis.confidence],
+      ["Auto Fields", String(analysis.autoFieldCount || 0)],
+    ],
+  });
+
   refreshBinderSelects();
 }
 
@@ -774,12 +823,13 @@ function renderCollection() {
     const coverTitle = cleanText(binder.coverTitle) || binder.name;
     const coverA = binder.coverColorA || c1;
     const coverB = binder.coverColorB || c2;
-    const sleeve = binder.sleeveColor || "#9cdfff";
-    const pageTint = binder.pageTint || "#0f1d2f";
+    const pageTheme = getPageTheme(binder, currentPage);
+    const sleeve = pageTheme.sleeveColor || binder.sleeveColor || "#9cdfff";
+    const pageTint = pageTheme.pageTint || binder.pageTint || "#0f1d2f";
     const coverBg = binder.coverImage
       ? `linear-gradient(rgba(3,12,22,.22), rgba(3,12,22,.62)), url(${binder.coverImage})`
       : `linear-gradient(120deg, ${coverA}40, ${coverB}40)`;
-    const pageDoodle = getPageDoodlePattern(binder.style, currentPage);
+    const pageDoodle = getPageDoodlePattern(pageTheme.patternStyle || binder.style, currentPage, pageTheme.patternStrength);
 
     const cardsOnPage = cards.filter((c) => Number(c.page || 1) === currentPage);
     const allCardsOnPage = allCards.filter((c) => Number(c.page || 1) === currentPage);
@@ -803,7 +853,7 @@ function renderCollection() {
       <header class="binder-header" style="background-image:${coverBg}; background-size:cover; background-position:center;">
         <div>
           <h3>${escapeHtml(coverTitle)}</h3>
-          <p class="meta">${cards.length} cards · Page ${currentPage} of ${totalPages}</p>
+          <p class="meta">${cards.length} cards · Page ${currentPage} of ${totalPages} · ${escapeHtml(getPageMethodLabel(pageTheme.method))} Method</p>
         </div>
         <div class="page-controls">
           <button class="btn ghost small" data-action="toggle-binder" type="button">Close</button>
@@ -904,6 +954,14 @@ function renderCollection() {
         img.src = slotCard.image;
         img.alt = `${slotCard.name} thumbnail`;
         slot.appendChild(img);
+        slot.classList.add("has-card");
+        slot.addEventListener("click", () => {
+          openCardDetailModal(slotCard, {
+            binderName: binder.coverTitle || binder.name,
+            page: currentPage,
+            slot: slotNumber,
+          });
+        });
       } else {
         slot.classList.add("empty");
         slot.textContent = "Empty";
@@ -1045,11 +1103,11 @@ function renderBinderBook() {
   els.binderBookPrev.disabled = leftPage <= 1 || runtime.book.turning;
   els.binderBookNext.disabled = rightPage >= Number(binder.pages || 1) || runtime.book.turning;
 
-  renderBinderBookGrid(els.binderBookLeftGrid, leftCards, leftPage);
-  renderBinderBookGrid(els.binderBookRightGrid, rightCards, rightPage);
+  renderBinderBookGrid(els.binderBookLeftGrid, leftCards, leftPage, binder);
+  renderBinderBookGrid(els.binderBookRightGrid, rightCards, rightPage, binder);
 }
 
-function renderBinderBookGrid(target, cards, page) {
+function renderBinderBookGrid(target, cards, page, binder) {
   target.innerHTML = "";
   for (let slotNumber = 1; slotNumber <= 9; slotNumber += 1) {
     const card = cards.find((item) => Number(item.slotOrder || 0) === slotNumber);
@@ -1060,6 +1118,16 @@ function renderBinderBookGrid(target, cards, page) {
       ${card ? `<img src="${card.image}" alt="${escapeAttr(card.name)}" />` : "Empty"}
       ${card ? `<span class="binder-book-slot-name">${escapeHtml(card.name)}</span>` : ""}
     `;
+    if (card) {
+      slot.classList.add("has-card");
+      slot.addEventListener("click", () => {
+        openCardDetailModal(card, {
+          binderName: binder?.coverTitle || binder?.name || "Binder",
+          page,
+          slot: slotNumber,
+        });
+      });
+    }
     target.appendChild(slot);
   }
 }
@@ -1071,8 +1139,42 @@ function getPageCards(binderId, page) {
   );
 }
 
-function getPageDoodlePattern(style, page) {
-  const key = `${style}:${page}`;
+function getPageTheme(binder, page) {
+  const fallbackMethod = cleanText(binder.pageMethodDefault) || "classic";
+  const fallbackPreset = PAGE_METHOD_PRESETS[fallbackMethod] || PAGE_METHOD_PRESETS.classic;
+  const fromMap = binder.pageThemes?.[String(page)] || {};
+
+  return {
+    method: cleanText(fromMap.method) || fallbackMethod,
+    patternStyle: cleanText(fromMap.patternStyle) || fallbackPreset.patternStyle || binder.style || "ocean",
+    pageTint: hexSafe(fromMap.pageTint, fallbackPreset.pageTint || binder.pageTint || "#0f1d2f"),
+    sleeveColor: hexSafe(fromMap.sleeveColor, fallbackPreset.sleeveColor || binder.sleeveColor || "#9cdfff"),
+    patternStrength: clamp(Number(fromMap.patternStrength || fallbackPreset.patternStrength || 45), 8, 100),
+  };
+}
+
+function upsertPageTheme(binder, page) {
+  if (!binder.pageThemes || typeof binder.pageThemes !== "object") {
+    binder.pageThemes = {};
+  }
+  const current = getPageTheme(binder, page);
+  binder.pageThemes[String(page)] = {
+    method: current.method,
+    patternStyle: current.patternStyle,
+    pageTint: current.pageTint,
+    sleeveColor: current.sleeveColor,
+    patternStrength: current.patternStrength,
+  };
+  return binder.pageThemes[String(page)];
+}
+
+function getPageMethodLabel(method) {
+  return PAGE_METHOD_PRESETS[method]?.label || "Custom";
+}
+
+function getPageDoodlePattern(style, page, strength = 45) {
+  const safeStrength = clamp(Number(strength || 45), 8, 100);
+  const key = `${style}:${page}:${safeStrength}`;
   if (runtime.pageDoodles[key]) return runtime.pageDoodles[key];
 
   const palette = {
@@ -1084,13 +1186,16 @@ function getPageDoodlePattern(style, page) {
   };
   const [a, b] = palette[style] || palette.ocean;
   const shift = (Number(page || 1) * 7) % 22;
+  const strokeOpacity = (0.08 + safeStrength / 500).toFixed(3);
+  const fillOpacity = (0.06 + safeStrength / 420).toFixed(3);
+  const strokeWidth = (1 + safeStrength / 70).toFixed(2);
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220' viewBox='0 0 220 220'>
-    <g fill='none' stroke='${a}' stroke-opacity='.19' stroke-width='2'>
+    <g fill='none' stroke='${a}' stroke-opacity='${strokeOpacity}' stroke-width='${strokeWidth}'>
       <circle cx='40' cy='42' r='12'/>
       <circle cx='178' cy='74' r='16'/>
       <path d='M20 ${130 + shift}c18-10 42-9 57 1s34 9 48 0 31-10 45-1'/>
     </g>
-    <g fill='${b}' fill-opacity='.16'>
+    <g fill='${b}' fill-opacity='${fillOpacity}'>
       <polygon points='102,25 110,42 129,45 115,58 118,77 102,68 86,77 89,58 75,45 94,42'/>
       <rect x='152' y='152' width='22' height='22' rx='4' transform='rotate(17 163 163)'/>
       <circle cx='58' cy='170' r='8'/>
@@ -1581,6 +1686,16 @@ function renderBinderManager() {
     const coverB = binder.coverColorB || c2;
     const sleeve = binder.sleeveColor || "#9cdfff";
     const pageTint = binder.pageTint || "#0f1d2f";
+    const maxPages = Math.max(1, Number(binder.pages) || 1);
+    const customPage = clamp(Number(runtime.viewPageByBinder[binder.id] || 1), 1, maxPages);
+    const customTheme = getPageTheme(binder, customPage);
+    const methodOptions = Object.entries(PAGE_METHOD_PRESETS)
+      .map(([key, preset]) => `<option value="${key}" ${key === customTheme.method ? "selected" : ""}>${escapeHtml(preset.label)}</option>`)
+      .join("");
+    const pageOptions = Array.from({ length: maxPages }, (_, i) => {
+      const page = i + 1;
+      return `<option value="${page}" ${page === customPage ? "selected" : ""}>Page ${page}</option>`;
+    }).join("");
 
     wrap.innerHTML = `
       <h4>${escapeHtml(binder.name)}</h4>
@@ -1630,6 +1745,41 @@ function renderBinderManager() {
 
       <div class="cover-preview" style="background-image:${binder.coverImage ? `linear-gradient(rgba(3,12,22,.28), rgba(3,12,22,.55)), url(${binder.coverImage})` : `linear-gradient(120deg, ${coverA}, ${coverB})`}">${escapeHtml(coverTitle)}</div>
       <div class="sleeve-preview" style="border-color:${sleeve}; background-color:${pageTint};"></div>
+
+      <div class="michi-page-lab">
+        <h5>Michi Method Page Lab</h5>
+        <div class="sub-grid">
+          <label>
+            Target page
+            <select data-action="theme-page">${pageOptions}</select>
+          </label>
+          <label>
+            Method preset
+            <select data-action="theme-method">${methodOptions}</select>
+          </label>
+          <label>
+            Page tint
+            <input type="color" value="${escapeAttr(hexSafe(customTheme.pageTint, pageTint))}" data-action="theme-tint" />
+          </label>
+          <label>
+            Sleeve tint
+            <input type="color" value="${escapeAttr(hexSafe(customTheme.sleeveColor, sleeve))}" data-action="theme-sleeve" />
+          </label>
+          <label>
+            Pattern style
+            <select data-action="theme-pattern">
+              ${Object.keys(BINDER_STYLES)
+                .map((style) => `<option value="${style}" ${style === customTheme.patternStyle ? "selected" : ""}>${titleCase(style)}</option>`)
+                .join("")}
+            </select>
+          </label>
+          <label>
+            Pattern strength (${Number(customTheme.patternStrength || 45)})
+            <input type="range" min="8" max="100" step="1" value="${Number(customTheme.patternStrength || 45)}" data-action="theme-strength" />
+          </label>
+        </div>
+        <button class="btn ghost small" data-action="theme-apply-all" type="button">Apply This Style To All Pages</button>
+      </div>
     `;
 
     const renameInput = wrap.querySelector('input[data-action="rename"]');
@@ -1642,6 +1792,13 @@ function renderBinderManager() {
     const coverBInput = wrap.querySelector('input[data-action="cover-b"]');
     const sleeveInput = wrap.querySelector('input[data-action="sleeve"]');
     const clearCoverBtn = wrap.querySelector('button[data-action="clear-cover"]');
+    const themePageSelect = wrap.querySelector('select[data-action="theme-page"]');
+    const themeMethodSelect = wrap.querySelector('select[data-action="theme-method"]');
+    const themePatternSelect = wrap.querySelector('select[data-action="theme-pattern"]');
+    const themeTintInput = wrap.querySelector('input[data-action="theme-tint"]');
+    const themeSleeveInput = wrap.querySelector('input[data-action="theme-sleeve"]');
+    const themeStrengthInput = wrap.querySelector('input[data-action="theme-strength"]');
+    const themeApplyAllBtn = wrap.querySelector('button[data-action="theme-apply-all"]');
 
     renameInput.addEventListener("change", () => {
       const newName = cleanText(renameInput.value);
@@ -1727,6 +1884,82 @@ function renderBinderManager() {
       persist();
       renderCollection();
       renderBinderManager();
+    });
+
+    themePageSelect.addEventListener("change", () => {
+      runtime.viewPageByBinder[binder.id] = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      renderCollection();
+      renderBinderManager();
+    });
+
+    themeMethodSelect.addEventListener("change", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      const preset = PAGE_METHOD_PRESETS[themeMethodSelect.value] || PAGE_METHOD_PRESETS.classic;
+      theme.method = themeMethodSelect.value;
+      theme.patternStyle = preset.patternStyle;
+      theme.pageTint = preset.pageTint;
+      theme.sleeveColor = preset.sleeveColor;
+      theme.patternStrength = preset.patternStrength;
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    themePatternSelect.addEventListener("change", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      theme.patternStyle = themePatternSelect.value;
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    themeTintInput.addEventListener("change", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      theme.pageTint = themeTintInput.value;
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    themeSleeveInput.addEventListener("change", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      theme.sleeveColor = themeSleeveInput.value;
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    themeStrengthInput.addEventListener("input", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      theme.patternStrength = clamp(Number(themeStrengthInput.value) || 45, 8, 100);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    themeApplyAllBtn.addEventListener("click", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const source = getPageTheme(binder, page);
+      const map = {};
+      for (let p = 1; p <= maxPages; p += 1) {
+        map[String(p)] = {
+          method: source.method,
+          patternStyle: source.patternStyle,
+          pageTint: source.pageTint,
+          sleeveColor: source.sleeveColor,
+          patternStrength: source.patternStrength,
+        };
+      }
+      binder.pageThemes = map;
+      persist();
+      renderCollection();
+      renderBinderManager();
+      status(`Applied ${getPageMethodLabel(source.method)} method to all pages in ${binder.name}.`);
     });
 
     deleteBtn.addEventListener("click", () => {
@@ -1847,6 +2080,8 @@ function normalizePagingState() {
       sleeveColor: hexSafe(binder.sleeveColor, "#9cdfff"),
       pageTint: hexSafe(binder.pageTint, "#0f1d2f"),
       coverImage: binder.coverImage || "",
+      pageMethodDefault: cleanText(binder.pageMethodDefault) || "classic",
+      pageThemes: binder.pageThemes && typeof binder.pageThemes === "object" ? binder.pageThemes : {},
     };
   });
 
@@ -1873,6 +2108,17 @@ function normalizePagingState() {
       psa9Value: Number(card.psa9Value) || 0,
       psa10Value: Number(card.psa10Value) || 0,
       slotOrder: Number(card.slotOrder) || pageCounters[key],
+      subtypes: Array.isArray(card.subtypes) ? card.subtypes : [],
+      types: Array.isArray(card.types) ? card.types : [],
+      evolvesTo: Array.isArray(card.evolvesTo) ? card.evolvesTo : [],
+      abilities: Array.isArray(card.abilities) ? card.abilities : [],
+      attacks: Array.isArray(card.attacks) ? card.attacks : [],
+      weaknesses: Array.isArray(card.weaknesses) ? card.weaknesses : [],
+      resistances: Array.isArray(card.resistances) ? card.resistances : [],
+      retreatCost: Array.isArray(card.retreatCost) ? card.retreatCost : [],
+      rules: Array.isArray(card.rules) ? card.rules : [],
+      nationalPokedexNumbers: Array.isArray(card.nationalPokedexNumbers) ? card.nationalPokedexNumbers : [],
+      scan: card.scan && typeof card.scan === "object" ? card.scan : null,
     };
   });
 
@@ -1897,6 +2143,8 @@ function defaultBinder(name = "Main Binder") {
     sleeveColor: "#9cdfff",
     pageTint: "#0f1d2f",
     coverImage: "",
+    pageMethodDefault: "classic",
+    pageThemes: {},
   };
 }
 
@@ -2266,6 +2514,104 @@ function fallbackNewsItem() {
     summary: "The live news feed could not load right now. Use Refresh News to try again.",
     image: "",
   };
+}
+
+function openCardDetailModal(card, context = {}) {
+  if (!card || !els.cardDetailModal) return;
+  const binderName = cleanText(context.binderName) || getBinderLabel(card.binderId);
+  const page = Number(context.page || card.page || 1);
+  const slot = Number(context.slot || card.slotOrder || 0);
+
+  els.cardDetailContext.textContent = `${binderName} · Page ${page}${slot ? ` · Slot ${slot}` : ""}`;
+  els.cardDetailTitle.textContent = card.name || "Card Details";
+  els.cardDetailImage.src = card.image || "";
+  els.cardDetailName.textContent = card.name || "Unknown Card";
+  els.cardDetailMeta.textContent = [card.set, card.number && `#${card.number}`, card.rarity].filter(Boolean).join(" · ") || "Card metadata pending";
+
+  els.cardDetailGradeRow.innerHTML = `
+    <div><span>Grade</span><strong>${Number(card.grade || 0).toFixed(1)}</strong></div>
+    <div><span>Raw</span><strong>${money(card.rawValue || 0)}</strong></div>
+    <div><span>PSA 9</span><strong>${money(card.psa9Value || 0)}</strong></div>
+    <div><span>PSA 10</span><strong>${money(card.psa10Value || 0)}</strong></div>
+  `;
+
+  renderAutoInfoGrid(els.cardDetailFields, card, {
+    fields: [
+      ["HP", card.hp],
+      ["Supertype", card.supertype],
+      ["Types", joinList(card.types)],
+      ["Subtypes", joinList(card.subtypes)],
+      ["Evolves From", card.evolvesFrom],
+      ["Evolves To", joinList(card.evolvesTo)],
+      ["Artist", card.artist],
+      ["Reg. Mark", card.regulationMark],
+      ["Retreat", joinList(card.retreatCost)],
+      ["Weaknesses", formatWeakResList(card.weaknesses)],
+      ["Resistances", formatWeakResList(card.resistances)],
+      ["Abilities", asCountLabel(card.abilities, "ability")],
+      ["Attacks", asCountLabel(card.attacks, "attack")],
+      ["Rules", asCountLabel(card.rules, "rule")],
+      ["Pokedex #", joinList(card.nationalPokedexNumbers)],
+      ["Set ID", card.tcg?.setId],
+      ["Series", card.tcg?.setSeries],
+      ["Release", card.tcg?.releaseDate],
+      ["TCG Card ID", card.tcg?.id],
+      ["Scan Confidence", card.scan?.confidence],
+      ["Auto Fields", card.scan?.autoFieldCount != null ? String(card.scan.autoFieldCount) : ""],
+    ],
+  });
+
+  els.cardDetailModal.classList.remove("hidden");
+  els.cardDetailModal.setAttribute("aria-hidden", "false");
+}
+
+function closeCardDetailModal() {
+  if (!els.cardDetailModal) return;
+  els.cardDetailModal.classList.add("hidden");
+  els.cardDetailModal.setAttribute("aria-hidden", "true");
+}
+
+function renderAutoInfoGrid(target, source, config = {}) {
+  if (!target) return;
+  const rows = Array.isArray(config.fields) ? config.fields : [];
+  target.innerHTML = "";
+
+  const filled = rows
+    .map(([label, value]) => ({ label, value: cleanText(value) }))
+    .filter((row) => row.value);
+
+  if (!filled.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No extra fields captured yet. Scan clarity and set text improve full metadata capture.";
+    target.appendChild(empty);
+    return;
+  }
+
+  filled.forEach((row) => {
+    const item = document.createElement("div");
+    item.className = "auto-info-item";
+    item.innerHTML = `<span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong>`;
+    target.appendChild(item);
+  });
+}
+
+function joinList(values) {
+  if (!Array.isArray(values) || !values.length) return "";
+  return values.map((value) => cleanText(value)).filter(Boolean).join(", ");
+}
+
+function asCountLabel(values, noun) {
+  if (!Array.isArray(values) || !values.length) return "";
+  return `${values.length} ${noun}${values.length === 1 ? "" : "s"}`;
+}
+
+function formatWeakResList(values) {
+  if (!Array.isArray(values) || !values.length) return "";
+  return values
+    .map((entry) => [cleanText(entry?.type), cleanText(entry?.value)].filter(Boolean).join(" "))
+    .filter(Boolean)
+    .join(" · ");
 }
 
 async function resizeImageFile(file, maxDim, quality) {
