@@ -1447,9 +1447,7 @@ function createScenePanelNode(pageTheme, panel, options = {}) {
   scene.dataset.anchor = String(panel.anchor);
   scene.style.gridColumn = `span ${Number(panel.colSpan || 1)}`;
   scene.style.gridRow = `span ${Number(panel.rowSpan || 1)}`;
-  scene.style.backgroundImage = buildScenePanelBackground(pageTheme, panel);
-  scene.style.backgroundSize = `${clamp(Number(panel.zoom) || 100, 60, 260)}%`;
-  scene.style.backgroundPosition = `${clamp(Number(panel.focusX) || 50, 0, 100)}% ${clamp(Number(panel.focusY) || 50, 0, 100)}%`;
+  applyScenePanelBackgroundStyles(scene, pageTheme, panel);
   scene.style.zIndex = String(clamp(Number(panel.layer) || 12, 1, 40));
   scene.innerHTML = `
     <span class="page-scene-kicker">${escapeHtml(panel.title || "Scene Art")}</span>
@@ -1494,9 +1492,7 @@ function renderPanelLayoutEditor(target, binder, page) {
     node.dataset.panelId = panel.id;
     node.style.gridColumn = `${((panel.anchor - 1) % 3) + 1} / span ${panel.colSpan}`;
     node.style.gridRow = `${Math.ceil(panel.anchor / 3)} / span ${panel.rowSpan}`;
-    node.style.backgroundImage = buildScenePanelBackground(theme, panel);
-    node.style.backgroundSize = `${clamp(Number(panel.zoom) || 100, 60, 260)}%`;
-    node.style.backgroundPosition = `${clamp(Number(panel.focusX) || 50, 0, 100)}% ${clamp(Number(panel.focusY) || 50, 0, 100)}%`;
+    applyScenePanelBackgroundStyles(node, theme, panel);
     node.style.zIndex = String(clamp(Number(panel.layer) || 12, 1, 40));
     node.innerHTML = `<span>${escapeHtml(panel.title || "Scene Art")}</span>`;
     node.addEventListener("pointerdown", (event) => {
@@ -1513,6 +1509,24 @@ function renderPanelLayoutEditor(target, binder, page) {
     node.appendChild(resizeHandle);
     target.appendChild(node);
   });
+}
+
+function applyScenePanelBackgroundStyles(node, pageTheme, panel) {
+  const zoom = clamp(Number(panel?.zoom) || 100, 60, 260);
+  const focusX = clamp(Number(panel?.focusX) || 50, 0, 100);
+  const focusY = clamp(Number(panel?.focusY) || 50, 0, 100);
+  const hasImageLayer = !!(cleanText(panel?.image) || cleanText(pageTheme?.sceneImage) || cleanText(pageTheme?.backgroundImage));
+
+  node.style.backgroundImage = buildScenePanelBackground(pageTheme, panel);
+  if (hasImageLayer) {
+    node.style.backgroundSize = `cover, ${zoom}%, cover`;
+    node.style.backgroundPosition = `center, ${focusX}% ${focusY}%, center`;
+    node.style.backgroundRepeat = "no-repeat, no-repeat, no-repeat";
+  } else {
+    node.style.backgroundSize = "cover, cover";
+    node.style.backgroundPosition = "center, center";
+    node.style.backgroundRepeat = "no-repeat, no-repeat";
+  }
 }
 
 function startScenePanelDrag(event, editor, binderId, page, panelId) {
