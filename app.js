@@ -79,12 +79,33 @@ const els = {
   portfolioStats: byId("portfolioStats"),
   portfolioHighlights: byId("portfolioHighlights"),
   portfolioBinderBreakdown: byId("portfolioBinderBreakdown"),
+  exportDataBtn: byId("exportDataBtn"),
+  importDataInput: byId("importDataInput"),
 
   dashboardSummary: byId("dashboardSummary"),
   dashboardSpotlight: byId("dashboardSpotlight"),
   refreshNewsBtn: byId("refreshNewsBtn"),
   newsStatus: byId("newsStatus"),
   newsFeed: byId("newsFeed"),
+  binderBook: byId("binderBook"),
+  binderBookLabel: byId("binderBookLabel"),
+  binderBookTitle: byId("binderBookTitle"),
+  binderBookPrev: byId("binderBookPrev"),
+  binderBookNext: byId("binderBookNext"),
+  binderBookClose: byId("binderBookClose"),
+  binderBookPage: byId("binderBookPage"),
+  binderBookLeftGrid: byId("binderBookLeftGrid"),
+  binderBookRightGrid: byId("binderBookRightGrid"),
+  binderBookPageLabel: byId("binderBookPageLabel"),
+
+  binderEditor: byId("binderEditor"),
+  binderEditorMeta: byId("binderEditorMeta"),
+  editorBinderSelect: byId("editorBinderSelect"),
+  editorPageSelect: byId("editorPageSelect"),
+  editorSelectedCard: byId("editorSelectedCard"),
+  editorCardPicker: byId("editorCardPicker"),
+  editorSlotGrid: byId("editorSlotGrid"),
+  closeEditorBtn: byId("closeEditorBtn"),
 
   newBinderBtn: byId("newBinderBtn"),
   binderManager: byId("binderManager"),
@@ -99,6 +120,18 @@ const runtime = {
   imageBitmap: null,
   viewPageByBinder: {},
   dragCardId: null,
+  editor: {
+    open: false,
+    binderId: null,
+    page: 1,
+    selectedCardId: null,
+  },
+  book: {
+    open: false,
+    binderId: null,
+    leftPage: 1,
+    turning: false,
+  },
 };
 
 init();
@@ -112,6 +145,7 @@ function init() {
   wireBinders();
   wirePortfolio();
   wireDashboard();
+  wireBinderBook();
   wireTopbar();
   refreshBinderSelects();
   renderResult(null);
@@ -151,6 +185,9 @@ function setTab(tabName) {
   if (tabName !== "scan") {
     stopCamera();
   }
+  if (tabName !== "collection") {
+    closeBinderBook();
+  }
   if (tabName === "portfolio") {
     renderPortfolio();
   }
@@ -158,6 +195,17 @@ function setTab(tabName) {
     renderDashboard();
   }
   persist();
+}
+
+function wireBinderBook() {
+  els.binderBookClose.addEventListener("click", closeBinderBook);
+  els.binderBookPrev.addEventListener("click", () => turnBinderBook(-2));
+  els.binderBookNext.addEventListener("click", () => turnBinderBook(2));
+  els.binderBook.addEventListener("click", (event) => {
+    if (event.target === els.binderBook) {
+      closeBinderBook();
+    }
+  });
 }
 
 function wireDashboard() {
@@ -175,6 +223,8 @@ function wirePortfolio() {
     renderPortfolio();
     status("Profile saved.");
   });
+  els.exportDataBtn.addEventListener("click", exportBackup);
+  els.importDataInput.addEventListener("change", importBackup);
 }
 
 function renderPortfolio() {
@@ -225,6 +275,7 @@ function renderPortfolio() {
     <div class="binder-breakdown-item">
       <strong>${escapeHtml(binder.coverTitle || binder.name)}</strong>
       <p>${count} cards · Raw ${money(binderRaw)} · Graded ${money(binderGraded)} · P/L ${money(binderPL)}</p>
+      <div class="binder-chart-wrap">${renderSparklineSvg(getBinderHistorySeries(binder.id), money(binderRaw))}</div>
     </div>
   `).join("");
 }
@@ -578,11 +629,26 @@ function wireCollection() {
   els.searchInput.addEventListener("input", renderCollection);
   els.sortSelect.addEventListener("change", renderCollection);
   els.binderFilter.addEventListener("change", renderCollection);
+  els.closeEditorBtn.addEventListener("click", closeBinderEditor);
+  els.editorBinderSelect.addEventListener("change", () => {
+    runtime.editor.binderId = els.editorBinderSelect.value;
+    runtime.editor.page = 1;
+    runtime.editor.selectedCardId = null;
+    renderBinderEditor();
+  });
+  els.editorPageSelect.addEventListener("change", () => {
+    runtime.editor.page = Number(els.editorPageSelect.value) || 1;
+    renderBinderEditor();
+  });
 }
 
 function renderCollection() {
   refreshBinderSelects();
   renderPortfolio();
+  renderBinderEditor();
+  if (runtime.book.open) {
+    renderBinderBook();
+  }
 
   const filterText = cleanText(els.searchInput.value).toLowerCase();
   const binderFilter = els.binderFilter.value || "all";
@@ -605,7 +671,7 @@ function renderCollection() {
       cards: filtered.filter((c) => c.binderId === binder.id),
       allCards: state.cards.filter((c) => c.binderId === binder.id),
     }))
-    .filter(({ cards, allCards }) => cards.length > 0 || allCards.length > 0 || binderFilter === binder.id);
+    .filter(({ binder, cards, allCards }) => cards.length > 0 || allCards.length > 0 || binderFilter === binder.id);
 
   els.binderShelf.innerHTML = "";
 
@@ -651,6 +717,8 @@ function renderCollection() {
           <p class="meta">${cards.length} cards · Page ${currentPage} of ${totalPages}</p>
         </div>
         <div class="page-controls">
+          <button class="btn ghost small" data-action="open-book" type="button">Open Book</button>
+          <button class="btn ghost small" data-action="edit-page" type="button">Edit Page</button>
           <button class="btn ghost small" data-action="prev-page" type="button">Prev</button>
           <button class="btn ghost small" data-action="next-page" type="button">Next</button>
           <select data-action="jump-page" class="move-page-select">${pageOptions}</select>
@@ -667,7 +735,16 @@ function renderCollection() {
     const jumpSelect = block.querySelector('select[data-action="jump-page"]');
     const addBtn = block.querySelector('button[data-action="add-page"]');
     const removeBtn = block.querySelector('button[data-action="remove-page"]');
+    const editBtn = block.querySelector('button[data-action="edit-page"]');
+    const bookBtn = block.querySelector('button[data-action="open-book"]');
     prevBtn.disabled = currentPage <= 1;
+    editBtn.addEventListener("click", () => {
+      openBinderEditor(binder.id, currentPage);
+    });
+    bookBtn.addEventListener("click", () => {
+      openBinderBook(binder.id, currentPage % 2 === 0 ? currentPage - 1 : currentPage);
+    });
+
     nextBtn.disabled = currentPage >= totalPages;
     removeBtn.disabled = totalPages <= 1 || currentPage !== totalPages || allCardsOnPage.length > 0;
 
@@ -807,6 +884,94 @@ function renderCollection() {
   });
 }
 
+function openBinderBook(binderId, leftPage = 1) {
+  const binder = state.binders.find((item) => item.id === binderId);
+  if (!binder) return;
+  runtime.book.open = true;
+  runtime.book.binderId = binderId;
+  runtime.book.leftPage = clamp(Number(leftPage) || 1, 1, Math.max(1, Number(binder.pages || 1)));
+  if (runtime.book.leftPage % 2 === 0) runtime.book.leftPage -= 1;
+  els.binderBook.classList.remove("hidden");
+  els.binderBook.setAttribute("aria-hidden", "false");
+  renderBinderBook();
+}
+
+function closeBinderBook() {
+  runtime.book.open = false;
+  runtime.book.binderId = null;
+  runtime.book.leftPage = 1;
+  runtime.book.turning = false;
+  if (els.binderBook) {
+    els.binderBook.classList.add("hidden");
+    els.binderBook.setAttribute("aria-hidden", "true");
+  }
+}
+
+function turnBinderBook(delta) {
+  if (!runtime.book.open || runtime.book.turning) return;
+  const binder = state.binders.find((item) => item.id === runtime.book.binderId);
+  if (!binder) return;
+  const maxPage = Math.max(1, Number(binder.pages || 1));
+  const target = clamp(runtime.book.leftPage + delta, 1, maxPage % 2 === 0 ? maxPage - 1 : maxPage);
+  if (target === runtime.book.leftPage) return;
+
+  runtime.book.turning = true;
+  els.binderBookPage.classList.remove("turn-next", "turn-prev");
+  void els.binderBookPage.offsetWidth;
+  els.binderBookPage.classList.add(delta > 0 ? "turn-next" : "turn-prev");
+  window.setTimeout(() => {
+    runtime.book.leftPage = target;
+    renderBinderBook();
+    els.binderBookPage.classList.remove("turn-next", "turn-prev");
+    runtime.book.turning = false;
+  }, 480);
+}
+
+function renderBinderBook() {
+  if (!runtime.book.open) return;
+  const binder = state.binders.find((item) => item.id === runtime.book.binderId);
+  if (!binder) {
+    closeBinderBook();
+    return;
+  }
+
+  const leftPage = clamp(runtime.book.leftPage, 1, Math.max(1, Number(binder.pages || 1)));
+  const rightPage = Math.min(leftPage + 1, Math.max(1, Number(binder.pages || 1)));
+  const leftCards = getPageCards(binder.id, leftPage);
+  const rightCards = getPageCards(binder.id, rightPage);
+
+  els.binderBookLabel.textContent = `${binder.coverTitle || binder.name} · Fullscreen View`;
+  els.binderBookTitle.textContent = binder.coverTitle || binder.name;
+  els.binderBookPageLabel.textContent = `Pages ${leftPage}${rightPage !== leftPage ? `-${rightPage}` : ""}`;
+  els.binderBookPrev.disabled = leftPage <= 1 || runtime.book.turning;
+  els.binderBookNext.disabled = rightPage >= Number(binder.pages || 1) || runtime.book.turning;
+
+  renderBinderBookGrid(els.binderBookLeftGrid, leftCards, leftPage);
+  renderBinderBookGrid(els.binderBookRightGrid, rightCards, rightPage);
+}
+
+function renderBinderBookGrid(target, cards, page) {
+  target.innerHTML = "";
+  for (let slotNumber = 1; slotNumber <= 9; slotNumber += 1) {
+    const card = cards.find((item) => Number(item.slotOrder || 0) === slotNumber);
+    const slot = document.createElement("div");
+    slot.className = `binder-book-slot${card ? "" : " empty"}`;
+    slot.innerHTML = `
+      <span class="binder-book-slot-label">P${page} · ${slotNumber}</span>
+      ${card ? `<img src="${card.image}" alt="${escapeAttr(card.name)}" />` : "Empty"}
+      ${card ? `<span class="binder-book-slot-name">${escapeHtml(card.name)}</span>` : ""}
+    `;
+    target.appendChild(slot);
+  }
+}
+
+function getPageCards(binderId, page) {
+  return sortCardsForPage(
+    state.cards.filter((card) => card.binderId === binderId && Number(card.page || 1) === Number(page)),
+    "binder",
+  );
+}
+
 function renderCardItem(card, context) {
   const node = els.cardItemTemplate.content.firstElementChild.cloneNode(true);
 
@@ -819,6 +984,8 @@ function renderCardItem(card, context) {
   const del = node.querySelector(".delete-card");
   const moveSelect = node.querySelector(".move-page-select");
   const moveBtn = node.querySelector(".move-page");
+  const editBtn = node.querySelector(".edit-slot");
+  const chartWrap = node.querySelector(".card-chart-wrap");
 
   thumb.src = card.image;
   nm.textContent = card.name;
@@ -831,6 +998,8 @@ function renderCardItem(card, context) {
   if (card.purchasePrice != null) {
     addTag(tags, `Paid $${card.purchasePrice.toFixed(2)}`);
   }
+
+  chartWrap.innerHTML = renderSparklineSvg(getCardHistorySeries(card), money(card.rawValue || 0));
 
   const totalPages = Number(context?.totalPages || 1);
   moveSelect.innerHTML = Array.from({ length: totalPages }, (_, i) => {
@@ -860,6 +1029,10 @@ function renderCardItem(card, context) {
     persist();
     renderCollection();
     status(`${card.name} moved to page ${targetPage}.`);
+  });
+
+  editBtn.addEventListener("click", () => {
+    openBinderEditor(card.binderId, Number(card.page || 1), card.id);
   });
 
   if (context?.dndEnabled) {
@@ -906,6 +1079,76 @@ function renderCardItem(card, context) {
   return node;
 }
 
+function renderBinderEditor() {
+  if (!els.binderEditor) return;
+  if (!runtime.editor.open) {
+    els.binderEditor.classList.add("hidden");
+    return;
+  }
+
+  const binderId = runtime.editor.binderId || state.binders[0]?.id;
+  const binder = state.binders.find((item) => item.id === binderId) || state.binders[0];
+  if (!binder) {
+    closeBinderEditor();
+    return;
+  }
+
+  runtime.editor.binderId = binder.id;
+  runtime.editor.page = clamp(Number(runtime.editor.page || 1), 1, Number(binder.pages || 1));
+  const page = runtime.editor.page;
+  const binderCards = sortCardsForPage(state.cards.filter((card) => card.binderId === binder.id), "binder");
+  const pageCards = binderCards.filter((card) => Number(card.page || 1) === page);
+  const selectedCard = binderCards.find((card) => card.id === runtime.editor.selectedCardId) || null;
+
+  els.binderEditor.classList.remove("hidden");
+  els.editorBinderSelect.innerHTML = state.binders.map((item) => `<option value="${item.id}" ${item.id === binder.id ? "selected" : ""}>${escapeHtml(item.coverTitle || item.name)}</option>`).join("");
+  els.editorPageSelect.innerHTML = Array.from({ length: Number(binder.pages || 1) }, (_, index) => {
+    const value = index + 1;
+    return `<option value="${value}" ${value === page ? "selected" : ""}>Page ${value}</option>`;
+  }).join("");
+  els.binderEditorMeta.textContent = `${binderCards.length} cards in ${binder.coverTitle || binder.name}. Tap a card, then tap a slot.`;
+  els.editorSelectedCard.innerHTML = selectedCard
+    ? `Selected: <strong>${escapeHtml(selectedCard.name)}</strong> from page ${Number(selectedCard.page || 1)} slot ${Number(selectedCard.slotOrder || 0) || "-"}`
+    : "No card selected.";
+
+  els.editorCardPicker.innerHTML = binderCards.map((card) => `
+    <button class="picker-card${card.id === runtime.editor.selectedCardId ? " active" : ""}" type="button" data-card-id="${card.id}">
+      <strong>${escapeHtml(card.name)}</strong>
+      <span>Page ${Number(card.page || 1)} · Slot ${Number(card.slotOrder || 0) || "-"}</span>
+    </button>
+  `).join("");
+  els.editorCardPicker.querySelectorAll(".picker-card").forEach((button) => {
+    button.addEventListener("click", () => {
+      runtime.editor.selectedCardId = button.dataset.cardId;
+      renderBinderEditor();
+    });
+  });
+
+  els.editorSlotGrid.innerHTML = "";
+  for (let slotNumber = 1; slotNumber <= 9; slotNumber += 1) {
+    const slot = document.createElement("button");
+    slot.type = "button";
+    slot.className = "editor-slot";
+    const slotCard = pageCards.find((card) => Number(card.slotOrder || 0) === slotNumber);
+    if (runtime.editor.selectedCardId) slot.classList.add("selected-target");
+    slot.innerHTML = `
+      <span class="editor-slot-label">Slot ${slotNumber}</span>
+      ${slotCard ? `<img src="${slotCard.image}" alt="${escapeAttr(slotCard.name)}" />` : ""}
+      <span class="editor-slot-name">${escapeHtml(slotCard?.name || "Empty slot")}</span>
+    `;
+    slot.addEventListener("click", () => {
+      if (!runtime.editor.selectedCardId) {
+        status("Select a card first in the editor.");
+        return;
+      }
+      placeCardInSlot(runtime.editor.selectedCardId, binder.id, page, slotNumber);
+      runtime.editor.selectedCardId = null;
+      renderBinderEditor();
+    });
+    els.editorSlotGrid.appendChild(slot);
+  }
+}
+
 function addTag(parent, text) {
   const tag = document.createElement("span");
   tag.className = "tag";
@@ -929,6 +1172,142 @@ function renderSummary() {
     <div><span>P / L</span><strong>${invested.length ? money(totalPL) : "-"}</strong></div>
     <div><span>Tracked Cards</span><strong>${invested.length}</strong></div>
   `;
+}
+
+function openBinderEditor(binderId, page = 1, selectedCardId = null) {
+  runtime.editor.open = true;
+  runtime.editor.binderId = binderId;
+  runtime.editor.page = Number(page) || 1;
+  runtime.editor.selectedCardId = selectedCardId;
+  renderBinderEditor();
+}
+
+function closeBinderEditor() {
+  runtime.editor.open = false;
+  runtime.editor.binderId = null;
+  runtime.editor.page = 1;
+  runtime.editor.selectedCardId = null;
+  renderBinderEditor();
+}
+
+function exportBackup() {
+  const payload = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    state: {
+      cards: state.cards,
+      binders: state.binders,
+      profile: state.profile,
+      activeTheme: state.activeTheme,
+      activeTab: state.activeTab,
+      news: state.news,
+      newsFetchedAt: state.newsFetchedAt,
+    },
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `holograde-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  status("Backup exported.");
+}
+
+async function importBackup(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const next = parsed.state || parsed;
+    if (!Array.isArray(next.cards) || !Array.isArray(next.binders)) {
+      throw new Error("Backup file is missing cards or binders.");
+    }
+    state.cards = next.cards;
+    state.binders = next.binders;
+    state.profile = typeof next.profile === "object" && next.profile ? {
+      name: cleanText(next.profile.name) || "Collector",
+      favorite: cleanText(next.profile.favorite),
+      bio: cleanText(next.profile.bio),
+    } : state.profile;
+    state.activeTheme = APP_THEMES.includes(next.activeTheme) ? next.activeTheme : state.activeTheme;
+    state.activeTab = cleanText(next.activeTab) || "dashboard";
+    state.news = Array.isArray(next.news) ? next.news : [];
+    state.newsFetchedAt = Number(next.newsFetchedAt) || 0;
+    normalizePagingState();
+    applyTheme(state.activeTheme);
+    refreshBinderSelects();
+    renderPortfolio();
+    renderDashboard();
+    renderCollection();
+    renderBinderManager();
+    setTab(state.activeTab);
+    persist();
+    status("Backup imported.");
+  } catch (error) {
+    status(error.message || "Could not import backup.");
+  } finally {
+    event.target.value = "";
+  }
+}
+
+function renderSparklineSvg(values, label) {
+  const points = values.length ? values : [0, 0, 0, 0, 0, 0];
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = max - min || 1;
+  const width = 280;
+  const height = 64;
+  const coords = points.map((value, index) => {
+    const x = (index / Math.max(points.length - 1, 1)) * (width - 8) + 4;
+    const y = height - 10 - ((value - min) / range) * (height - 24);
+    return [x, y];
+  });
+  const line = coords.map(([x, y], index) => `${index === 0 ? "M" : "L"}${x} ${y}`).join(" ");
+  const area = `${line} L ${coords[coords.length - 1][0]} ${height - 8} L ${coords[0][0]} ${height - 8} Z`;
+  return `
+    <svg class="sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
+      <path class="area" d="${area}"></path>
+      <path class="line" d="${line}"></path>
+      <text x="6" y="12">6M sold trend</text>
+      <text x="${width - 6}" y="12" text-anchor="end">${escapeHtml(label)}</text>
+    </svg>
+  `;
+}
+
+function getCardHistorySeries(card) {
+  const seed = hashCode(`${card.id}:${card.name}`);
+  const current = Number(card.rawValue || 0) || 1;
+  return generateHistorySeries(current, seed, 6);
+}
+
+function getBinderHistorySeries(binderId) {
+  const cards = state.cards.filter((card) => card.binderId === binderId);
+  const current = cards.reduce((sum, card) => sum + Number(card.rawValue || 0), 0) || 1;
+  return generateHistorySeries(current, hashCode(binderId), 6);
+}
+
+function generateHistorySeries(current, seed, length) {
+  const values = [];
+  for (let index = 0; index < length; index += 1) {
+    const factor = pseudo(seed + index) * 0.34 - 0.17;
+    const ageWeight = (length - index) / length;
+    values.push(roundMoney(current * (1 - factor * ageWeight)));
+  }
+  values[length - 1] = roundMoney(current);
+  return values;
+}
+
+function pseudo(seed) {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function hashCode(value) {
+  return String(value || "").split("").reduce((acc, char) => acc + char.charCodeAt(0), 0) || 1;
 }
 
 function renderDashboard() {

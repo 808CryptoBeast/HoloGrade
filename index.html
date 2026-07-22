@@ -139,7 +139,12 @@
         <div class="panel">
           <div class="row-between">
             <h2>My Portfolio</h2>
-            <button id="saveProfileBtn" class="btn primary small" type="button">Save Profile</button>
+            <div class="toolbar-actions">
+              <button id="exportDataBtn" class="btn ghost small" type="button">Export Backup</button>
+              <label class="btn ghost small" for="importDataInput">Import Backup</label>
+              <input id="importDataInput" type="file" accept="application/json" hidden />
+              <button id="saveProfileBtn" class="btn primary small" type="button">Save Profile</button>
+            </div>
           </div>
           <p class="muted">Track your collection performance and personalize your collector profile.</p>
 
@@ -183,6 +188,28 @@
           </div>
 
           <div id="collectionSummary" class="summary"></div>
+          <div id="binderEditor" class="binder-editor hidden">
+            <div class="row-between">
+              <div>
+                <h3>Binder Page Editor</h3>
+                <p id="binderEditorMeta" class="muted">Select a card, then tap a slot to place it.</p>
+              </div>
+              <button id="closeEditorBtn" class="btn ghost small" type="button">Close Editor</button>
+            </div>
+            <div class="editor-controls">
+              <label>
+                Binder
+                <select id="editorBinderSelect"></select>
+              </label>
+              <label>
+                Page
+                <select id="editorPageSelect"></select>
+              </label>
+            </div>
+            <div id="editorSelectedCard" class="selected-card muted">No card selected.</div>
+            <div id="editorCardPicker" class="editor-card-picker"></div>
+            <div id="editorSlotGrid" class="editor-slot-grid"></div>
+          </div>
           <div id="binderShelf" class="binder-shelf"></div>
         </div>
       </section>
@@ -200,6 +227,35 @@
     </main>
   </div>
 
+  <div id="binderBook" class="binder-book hidden" aria-hidden="true">
+    <div class="binder-book-shell">
+      <div class="binder-book-topbar">
+        <div>
+          <p id="binderBookLabel" class="book-kicker">Binder Book</p>
+          <h2 id="binderBookTitle">Binder</h2>
+        </div>
+        <div class="toolbar-actions">
+          <button id="binderBookPrev" class="btn ghost small" type="button">Prev Page</button>
+          <button id="binderBookNext" class="btn ghost small" type="button">Next Page</button>
+          <button id="binderBookClose" class="btn primary small" type="button">Close Book</button>
+        </div>
+      </div>
+      <div class="binder-book-stage">
+        <div id="binderBookPage" class="binder-page-spread">
+          <div class="binder-page-side left">
+            <div id="binderBookLeftGrid" class="binder-book-grid"></div>
+          </div>
+          <div class="binder-page-side right">
+            <div id="binderBookRightGrid" class="binder-book-grid"></div>
+          </div>
+        </div>
+      </div>
+      <div class="binder-book-footer">
+        <span id="binderBookPageLabel" class="badge">Pages 1-2</span>
+      </div>
+    </div>
+  </div>
+
   <template id="cardItemTemplate">
     <article class="card-item">
       <img class="thumb" alt="Card thumbnail" />
@@ -207,11 +263,13 @@
         <h4 class="nm"></h4>
         <p class="meta"></p>
         <div class="card-tags"></div>
+        <div class="card-chart-wrap"></div>
       </div>
       <div class="card-side">
         <span class="grade-chip"></span>
         <select class="move-page-select" aria-label="Move card to page"></select>
         <button class="btn ghost small move-page" type="button">Move</button>
+        <button class="btn ghost small edit-slot" type="button">Edit Slot</button>
         <button class="btn ghost small delete-card" type="button">Remove</button>
       </div>
     </article>
