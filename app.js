@@ -18,7 +18,7 @@ const PAGE_METHOD_PRESETS = {
 };
 
 const NEWS_CACHE_AGE_MS = 1000 * 60 * 45;
-const NEWS_RSS_URL = "https://news.google.com/rss/search?q=Pokemon%20TCG&hl=en-US&gl=US&ceid=US:en";
+const NEWS_RSS_URL = "https://news.google.com/rss/search?q=Pokemon TCG&hl=en-US&gl=US&ceid=US:en";
 
 const state = {
   cards: [],
@@ -515,17 +515,25 @@ async function identifyCard(ocrText) {
 
   const queries = [];
   if (probableName) {
-    queries.push(`name:${encodeURIComponent('"' + probableName + '"')}`);
-    queries.push(`name:*${encodeURIComponent(probableName)}*`);
+    queries.push(`name:"${probableName}"`);
+    queries.push(`name:${probableName}`);
+    queries.push(`name:*${probableName}*`);
   }
   tokens.slice(0, 6).forEach((token) => {
-    queries.push(`name:*${encodeURIComponent(token)}*`);
+    queries.push(`name:*${token}*`);
   });
 
   try {
     for (const q of queries) {
-      const url = `https://api.pokemontcg.io/v2/cards?q=${q}&pageSize=35`;
+      const params = new URLSearchParams({
+        q,
+        pageSize: "35",
+      });
+      const url = `https://api.pokemontcg.io/v2/cards?${params.toString()}`;
       const resp = await fetch(url);
+      if (!resp.ok) {
+        continue;
+      }
       const json = await resp.json();
       const rows = Array.isArray(json?.data) ? json.data : [];
       rows.forEach((row) => {
@@ -1621,6 +1629,9 @@ async function fetchNews(force) {
   try {
     const endpoint = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(NEWS_RSS_URL)}&count=6`;
     const response = await fetch(endpoint, { cache: force ? "no-store" : "default" });
+    if (!response.ok) {
+      throw new Error(`rss2json responded ${response.status}`);
+    }
     const data = await response.json();
     const items = Array.isArray(data.items) ? data.items : [];
 
@@ -1637,14 +1648,54 @@ async function fetchNews(force) {
     updateNewsStatus();
     renderDashboard();
   } catch {
-    if (!state.news.length) {
-      state.news = [fallbackNewsItem()];
+    try {
+      // Fallback when rss2json returns 422/rate errors.
+      const xmlText = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(NEWS_RSS_URL)}`, {
+        cache: force ? "no-store" : "default",
+      }).then((resp) => {
+        if (!resp.ok) throw new Error(`allorigins responded ${resp.status}`);
+        return resp.text();
+      });
+
+      const items = parseRssXmlItems(xmlText).slice(0, 6);
+      state.news = items.length ? items : [fallbackNewsItem()];
       state.newsFetchedAt = Date.now();
       persist();
+      updateNewsStatus();
+      renderDashboard();
+    } catch {
+      if (!state.news.length) {
+        state.news = [fallbackNewsItem()];
+        state.newsFetchedAt = Date.now();
+        persist();
+      }
+      els.newsStatus.textContent = "Offline";
+      renderDashboard();
     }
-    els.newsStatus.textContent = "Offline";
-    renderDashboard();
   }
+}
+
+function parseRssXmlItems(xmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(String(xmlText || ""), "text/xml");
+  const nodes = Array.from(doc.querySelectorAll("item"));
+
+  return nodes.map((node) => {
+    const title = cleanText(node.querySelector("title")?.textContent) || "Pokemon TCG Update";
+    const link = cleanText(node.querySelector("link")?.textContent) || NEWS_RSS_URL;
+    const pubDateRaw = cleanText(node.querySelector("pubDate")?.textContent);
+    const description = cleanText(node.querySelector("description")?.textContent);
+    const source = cleanText(node.querySelector("source")?.textContent) || "Google News";
+
+    return {
+      title,
+      link,
+      source,
+      pubDate: formatNewsDate(pubDateRaw),
+      summary: description.length > 180 ? `${description.slice(0, 177)}...` : description,
+      image: "",
+    };
+  });
 }
 
 function updateNewsStatus() {
