@@ -909,6 +909,8 @@ function renderCollection() {
     const coverTitle = cleanText(binder.coverTitle) || binder.name;
     const coverA = binder.coverColorA || c1;
     const coverB = binder.coverColorB || c2;
+    const coverSize = `${clamp(Number(binder.coverImageScale) || 100, 70, 220)}%`;
+    const coverPosition = `${clamp(Number(binder.coverImageFocusX) || 50, 0, 100)}% ${clamp(Number(binder.coverImageFocusY) || 50, 0, 100)}%`;
     const pageTheme = getPageTheme(binder, currentPage);
     const sleeve = pageTheme.sleeveColor || binder.sleeveColor || "#9cdfff";
     const pageTint = pageTheme.pageTint || binder.pageTint || "#0f1d2f";
@@ -927,7 +929,7 @@ function renderCollection() {
     }).join("");
 
     block.innerHTML = `
-      <button class="binder-cover-card" data-action="toggle-binder" type="button" style="background-image:${coverBg};">
+      <button class="binder-cover-card" data-action="toggle-binder" type="button" style="background-image:${coverBg}; background-size:${binder.coverImage ? `${coverSize}, ${coverSize}` : "cover"}; background-position:${binder.coverImage ? `${coverPosition}, ${coverPosition}` : "center"};">
         <span class="binder-spine"></span>
         <span class="binder-cover-copy">
           <span class="binder-cover-title">${escapeHtml(coverTitle)}</span>
@@ -936,7 +938,7 @@ function renderCollection() {
       </button>
 
       <div class="binder-interior">
-      <header class="binder-header" style="background-image:${coverBg}; background-size:cover; background-position:center;">
+      <header class="binder-header" style="background-image:${coverBg}; background-size:${binder.coverImage ? `${coverSize}, ${coverSize}` : "cover"}; background-position:${binder.coverImage ? `${coverPosition}, ${coverPosition}` : "center"};">
         <div>
           <h3>${escapeHtml(coverTitle)}</h3>
           <p class="meta">${cards.length} cards · Page ${currentPage} of ${totalPages} · ${escapeHtml(getPageMethodLabel(pageTheme.method))} Method</p>
@@ -1347,6 +1349,10 @@ function normalizeScenePanel(panel, index) {
     rowSpan: clamp(Number(panel.rowSpan) || 1, 1, 3),
     title: cleanText(panel.title) || "Scene Art",
     image: cleanText(panel.image),
+    zoom: clamp(Number(panel.zoom) || 100, 60, 260),
+    focusX: clamp(Number(panel.focusX) || 50, 0, 100),
+    focusY: clamp(Number(panel.focusY) || 50, 0, 100),
+    layer: clamp(Number(panel.layer) || 12, 1, 40),
   };
   const covered = getPanelCoveredSlots(normalized);
   return covered.length ? normalized : null;
@@ -1412,7 +1418,11 @@ function getAvailableSlotsForTheme(theme) {
 function renderPageLayoutItem(grid, slotNumber, pageTheme) {
   const panel = pageTheme.scenePanels.find((item) => Number(item.anchor) === Number(slotNumber));
   if (!panel) return false;
-  const scene = createScenePanelNode(pageTheme, panel, { mode: "collection" });
+  const scene = createScenePanelNode(pageTheme, panel, {
+    mode: "collection",
+    binderId: grid.dataset.binderId,
+    page: Number(grid.dataset.page || 1),
+  });
   grid.appendChild(scene);
   return true;
 }
@@ -1431,25 +1441,38 @@ function buildScenePanelBackground(pageTheme, panel) {
 }
 
 function createScenePanelNode(pageTheme, panel, options = {}) {
-  const scene = document.createElement(options.mode === "book" ? "div" : "div");
+  const scene = document.createElement("div");
   scene.className = `page-scene-panel${options.mode === "book" ? " book" : ""}`;
   scene.dataset.panelId = panel.id;
   scene.dataset.anchor = String(panel.anchor);
   scene.style.gridColumn = `span ${Number(panel.colSpan || 1)}`;
   scene.style.gridRow = `span ${Number(panel.rowSpan || 1)}`;
   scene.style.backgroundImage = buildScenePanelBackground(pageTheme, panel);
+  scene.style.backgroundSize = `${clamp(Number(panel.zoom) || 100, 60, 260)}%`;
+  scene.style.backgroundPosition = `${clamp(Number(panel.focusX) || 50, 0, 100)}% ${clamp(Number(panel.focusY) || 50, 0, 100)}%`;
+  scene.style.zIndex = String(clamp(Number(panel.layer) || 12, 1, 40));
   scene.innerHTML = `
     <span class="page-scene-kicker">${escapeHtml(panel.title || "Scene Art")}</span>
     <strong>${escapeHtml(panel.title || pageTheme.designTitle || getPageMethodLabel(pageTheme.method))}</strong>
   `;
+
+  if (options.mode === "collection") {
+    scene.classList.add("draggable-panel");
+    scene.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      startCollectionScenePanelDrag(event, scene, options.binderId, options.page, panel.id);
+    });
+  }
   return scene;
 }
 
 function renderPageScenePanels(grid, pageTheme, options = {}) {
-  pageTheme.scenePanels.forEach((panel) => {
+  [...pageTheme.scenePanels]
+    .sort((a, b) => Number(a.layer || 0) - Number(b.layer || 0))
+    .forEach((panel) => {
     const scene = createScenePanelNode(pageTheme, panel, options);
     grid.appendChild(scene);
-  });
+    });
 }
 
 function renderPanelLayoutEditor(target, binder, page) {
@@ -1472,11 +1495,22 @@ function renderPanelLayoutEditor(target, binder, page) {
     node.style.gridColumn = `${((panel.anchor - 1) % 3) + 1} / span ${panel.colSpan}`;
     node.style.gridRow = `${Math.ceil(panel.anchor / 3)} / span ${panel.rowSpan}`;
     node.style.backgroundImage = buildScenePanelBackground(theme, panel);
+    node.style.backgroundSize = `${clamp(Number(panel.zoom) || 100, 60, 260)}%`;
+    node.style.backgroundPosition = `${clamp(Number(panel.focusX) || 50, 0, 100)}% ${clamp(Number(panel.focusY) || 50, 0, 100)}%`;
+    node.style.zIndex = String(clamp(Number(panel.layer) || 12, 1, 40));
     node.innerHTML = `<span>${escapeHtml(panel.title || "Scene Art")}</span>`;
     node.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       startScenePanelDrag(event, target, binder.id, page, panel.id);
     });
+    const resizeHandle = document.createElement("span");
+    resizeHandle.className = "panel-resize-handle";
+    resizeHandle.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      startScenePanelResize(event, target, binder.id, page, panel.id);
+    });
+    node.appendChild(resizeHandle);
     target.appendChild(node);
   });
 }
@@ -1540,6 +1574,106 @@ function moveScenePanelToAnchor(binderId, page, panelId, preferredAnchor) {
   persist();
   renderCollection();
   renderBinderManager();
+}
+
+function mutateScenePanel(binder, maxPages, themePageSelect, panelId, updater) {
+  const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+  const theme = upsertPageTheme(binder, page);
+  theme.scenePanels = theme.scenePanels.map((panel) => panel.id === panelId ? normalizeScenePanel(updater(panel), 0) || panel : panel);
+  persist();
+  renderCollection();
+  renderBinderManager();
+}
+
+function startCollectionScenePanelDrag(event, node, binderId, page, panelId) {
+  const grid = node.parentElement;
+  if (!grid) return;
+  const rect = grid.getBoundingClientRect();
+  const pointerId = event.pointerId;
+  runtime.panelDrag = { binderId, page, panelId, pointerId, source: "collection" };
+  node.setPointerCapture(pointerId);
+  node.classList.add("dragging");
+
+  const onMove = (moveEvent) => {
+    if (!runtime.panelDrag || runtime.panelDrag.pointerId !== moveEvent.pointerId) return;
+    const dx = moveEvent.clientX - event.clientX;
+    const dy = moveEvent.clientY - event.clientY;
+    node.style.transform = `translate(${dx}px, ${dy}px)`;
+  };
+
+  const onEnd = (endEvent) => {
+    if (!runtime.panelDrag || runtime.panelDrag.pointerId !== endEvent.pointerId) return;
+    const anchor = anchorFromPoint(rect, endEvent.clientX, endEvent.clientY);
+    moveScenePanelToAnchor(binderId, page, panelId, anchor);
+    runtime.panelDrag = null;
+    node.classList.remove("dragging");
+    node.style.transform = "";
+    node.releasePointerCapture(pointerId);
+    node.removeEventListener("pointermove", onMove);
+    node.removeEventListener("pointerup", onEnd);
+    node.removeEventListener("pointercancel", onEnd);
+  };
+
+  node.addEventListener("pointermove", onMove);
+  node.addEventListener("pointerup", onEnd);
+  node.addEventListener("pointercancel", onEnd);
+}
+
+function startScenePanelResize(event, editor, binderId, page, panelId) {
+  const binder = state.binders.find((item) => item.id === binderId);
+  if (!binder) return;
+  const theme = getPageTheme(binder, page);
+  const panel = theme.scenePanels.find((item) => item.id === panelId);
+  if (!panel) return;
+  const rect = editor.getBoundingClientRect();
+  const pointerId = event.pointerId;
+  const node = event.currentTarget.parentElement;
+  if (!node) return;
+  let nextColSpan = Number(panel.colSpan || 1);
+  let nextRowSpan = Number(panel.rowSpan || 1);
+  runtime.panelDrag = { binderId, page, panelId, pointerId, source: "resize" };
+  node.setPointerCapture(pointerId);
+
+  const onMove = (moveEvent) => {
+    if (!runtime.panelDrag || runtime.panelDrag.pointerId !== moveEvent.pointerId) return;
+    const col = clamp(Math.floor(((moveEvent.clientX - rect.left) / rect.width) * 3) + 1, 1, 3);
+    const row = clamp(Math.floor(((moveEvent.clientY - rect.top) / rect.height) * 3) + 1, 1, 3);
+    const startCol = ((panel.anchor - 1) % 3) + 1;
+    const startRow = Math.ceil(panel.anchor / 3);
+    const candidateColSpan = clamp(col - startCol + 1, 1, 3);
+    const candidateRowSpan = clamp(row - startRow + 1, 1, 3);
+    const candidate = { ...panel, colSpan: candidateColSpan, rowSpan: candidateRowSpan };
+    if (!isPanelPlacementValid(theme.scenePanels, candidate, panelId)) return;
+    nextColSpan = candidateColSpan;
+    nextRowSpan = candidateRowSpan;
+    node.parentElement.style.gridTemplateColumns = "repeat(3, 1fr)";
+    node.style.gridColumn = `${((panel.anchor - 1) % 3) + 1} / span ${nextColSpan}`;
+    node.style.gridRow = `${Math.ceil(panel.anchor / 3)} / span ${nextRowSpan}`;
+  };
+
+  const onEnd = (endEvent) => {
+    if (!runtime.panelDrag || runtime.panelDrag.pointerId !== endEvent.pointerId) return;
+    const liveBinder = state.binders.find((item) => item.id === binderId);
+    if (liveBinder) {
+      const liveTheme = upsertPageTheme(liveBinder, page);
+      liveTheme.scenePanels = liveTheme.scenePanels.map((item) => item.id === panelId
+        ? { ...item, colSpan: nextColSpan, rowSpan: nextRowSpan }
+        : item);
+      rebalancePageForLayout(binderId, page);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    }
+    runtime.panelDrag = null;
+    node.releasePointerCapture(pointerId);
+    node.removeEventListener("pointermove", onMove);
+    node.removeEventListener("pointerup", onEnd);
+    node.removeEventListener("pointercancel", onEnd);
+  };
+
+  node.addEventListener("pointermove", onMove);
+  node.addEventListener("pointerup", onEnd);
+  node.addEventListener("pointercancel", onEnd);
 }
 
 function applyPageThemeToGrid(grid, pageTheme, pageDoodle) {
@@ -1613,6 +1747,7 @@ function renderPageDecorations(grid, binder, page) {
     sticker.style.top = `${clamp(Number(decoration.y) || 50, 0, 100)}%`;
     sticker.style.width = `${clamp(Number(decoration.size) || 18, 8, 42)}%`;
     sticker.style.opacity = String(clamp(Number(decoration.opacity) || 0.95, 0.2, 1));
+    sticker.style.zIndex = String(clamp(Number(decoration.layer) || 20, 1, 40));
     sticker.style.transform = `translate(-50%, -50%) rotate(${clamp(Number(decoration.rotation) || 0, -180, 180)}deg)`;
     sticker.innerHTML = `
       <img src="${createStickerDataUrl(preset, decoration.color)}" alt="${escapeAttr(preset.label)} sticker" draggable="false" />
@@ -1640,6 +1775,7 @@ function normalizeDecorations(decorations) {
       size: clamp(Number(item?.size) || 18, 8, 42),
       rotation: clamp(Number(item?.rotation) || 0, -180, 180),
       opacity: clamp(Number(item?.opacity) || 0.95, 0.2, 1),
+      layer: clamp(Number(item?.layer) || 20, 1, 40),
       color: cleanText(item?.color) || "",
     }))
     .filter((item) => STICKER_PRESETS[item.kind]);
@@ -2208,6 +2344,9 @@ function renderBinderManager() {
     const coverB = binder.coverColorB || c2;
     const sleeve = binder.sleeveColor || "#9cdfff";
     const pageTint = binder.pageTint || "#0f1d2f";
+    const coverScale = clamp(Number(binder.coverImageScale) || 100, 70, 220);
+    const coverFocusX = clamp(Number(binder.coverImageFocusX) || 50, 0, 100);
+    const coverFocusY = clamp(Number(binder.coverImageFocusY) || 50, 0, 100);
     const maxPages = Math.max(1, Number(binder.pages) || 1);
     const customPage = clamp(Number(runtime.viewPageByBinder[binder.id] || 1), 1, maxPages);
     const customTheme = getPageTheme(binder, customPage);
@@ -2246,6 +2385,26 @@ function renderBinderManager() {
           Panel art
           <input type="file" accept="image/*" data-action="panel-image" data-panel-id="${panel.id}" />
         </label>
+        <label>
+          Layer (${Number(panel.layer || 12)})
+          <input type="range" min="1" max="40" step="1" value="${Number(panel.layer || 12)}" data-action="panel-layer" data-panel-id="${panel.id}" />
+        </label>
+        <label>
+          Zoom (${Number(panel.zoom || 100)}%)
+          <input type="range" min="60" max="260" step="5" value="${Number(panel.zoom || 100)}" data-action="panel-zoom" data-panel-id="${panel.id}" />
+        </label>
+        <label>
+          Focus X (${Number(panel.focusX || 50)}%)
+          <input type="range" min="0" max="100" step="1" value="${Number(panel.focusX || 50)}" data-action="panel-focus-x" data-panel-id="${panel.id}" />
+        </label>
+        <label>
+          Focus Y (${Number(panel.focusY || 50)}%)
+          <input type="range" min="0" max="100" step="1" value="${Number(panel.focusY || 50)}" data-action="panel-focus-y" data-panel-id="${panel.id}" />
+        </label>
+        <div class="panel-layer-actions">
+          <button class="btn ghost small" type="button" data-action="panel-back" data-panel-id="${panel.id}">Send Back</button>
+          <button class="btn ghost small" type="button" data-action="panel-front" data-panel-id="${panel.id}">Bring Front</button>
+        </div>
       </div>
     `).join("");
     const stickerButtons = Object.entries(STICKER_PRESETS)
@@ -2300,10 +2459,22 @@ function renderBinderManager() {
           Sleeve border
           <input type="color" value="${escapeAttr(hexSafe(sleeve, "#9cdfff"))}" data-action="sleeve" />
         </label>
+        <label>
+          Cover zoom (${coverScale}%)
+          <input type="range" min="70" max="220" step="1" value="${coverScale}" data-action="cover-scale" />
+        </label>
+        <label>
+          Cover focus X (${coverFocusX}%)
+          <input type="range" min="0" max="100" step="1" value="${coverFocusX}" data-action="cover-focus-x" />
+        </label>
+        <label>
+          Cover focus Y (${coverFocusY}%)
+          <input type="range" min="0" max="100" step="1" value="${coverFocusY}" data-action="cover-focus-y" />
+        </label>
         <button class="btn ghost small" data-action="clear-cover" type="button">Clear Cover Image</button>
       </div>
 
-      <div class="cover-preview" style="background-image:${binder.coverImage ? `linear-gradient(rgba(3,12,22,.28), rgba(3,12,22,.55)), url(${binder.coverImage})` : `linear-gradient(120deg, ${coverA}, ${coverB})`}">${escapeHtml(coverTitle)}</div>
+      <div class="cover-preview" style="background-image:${binder.coverImage ? `linear-gradient(rgba(3,12,22,.28), rgba(3,12,22,.55)), url(${binder.coverImage})` : `linear-gradient(120deg, ${coverA}, ${coverB})`}; background-size:${binder.coverImage ? `${coverScale}%, ${coverScale}%` : "cover"}; background-position:${binder.coverImage ? `${coverFocusX}% ${coverFocusY}%, ${coverFocusX}% ${coverFocusY}%` : "center"};">${escapeHtml(coverTitle)}</div>
       <div class="sleeve-preview" style="border-color:${sleeve}; background-color:${pageTint};"></div>
 
       <div class="michi-page-lab">
@@ -2384,6 +2555,9 @@ function renderBinderManager() {
     const coverAInput = wrap.querySelector('input[data-action="cover-a"]');
     const coverBInput = wrap.querySelector('input[data-action="cover-b"]');
     const sleeveInput = wrap.querySelector('input[data-action="sleeve"]');
+    const coverScaleInput = wrap.querySelector('input[data-action="cover-scale"]');
+    const coverFocusXInput = wrap.querySelector('input[data-action="cover-focus-x"]');
+    const coverFocusYInput = wrap.querySelector('input[data-action="cover-focus-y"]');
     const clearCoverBtn = wrap.querySelector('button[data-action="clear-cover"]');
     const themePageSelect = wrap.querySelector('select[data-action="theme-page"]');
     const themeMethodSelect = wrap.querySelector('select[data-action="theme-method"]');
@@ -2405,6 +2579,12 @@ function renderBinderManager() {
     const panelTitleInputs = wrap.querySelectorAll('input[data-action="panel-title"]');
     const panelShapeSelects = wrap.querySelectorAll('select[data-action="panel-shape"]');
     const panelImageInputs = wrap.querySelectorAll('input[data-action="panel-image"]');
+    const panelLayerInputs = wrap.querySelectorAll('input[data-action="panel-layer"]');
+    const panelZoomInputs = wrap.querySelectorAll('input[data-action="panel-zoom"]');
+    const panelFocusXInputs = wrap.querySelectorAll('input[data-action="panel-focus-x"]');
+    const panelFocusYInputs = wrap.querySelectorAll('input[data-action="panel-focus-y"]');
+    const panelBackButtons = wrap.querySelectorAll('button[data-action="panel-back"]');
+    const panelFrontButtons = wrap.querySelectorAll('button[data-action="panel-front"]');
     const panelLayoutEditor = wrap.querySelector('.panel-layout-editor');
 
     renameInput.addEventListener("change", () => {
@@ -2481,6 +2661,27 @@ function renderBinderManager() {
 
     sleeveInput.addEventListener("change", () => {
       binder.sleeveColor = sleeveInput.value;
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    coverScaleInput.addEventListener("change", () => {
+      binder.coverImageScale = clamp(Number(coverScaleInput.value) || 100, 70, 220);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    coverFocusXInput.addEventListener("change", () => {
+      binder.coverImageFocusX = clamp(Number(coverFocusXInput.value) || 50, 0, 100);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    coverFocusYInput.addEventListener("change", () => {
+      binder.coverImageFocusY = clamp(Number(coverFocusYInput.value) || 50, 0, 100);
       persist();
       renderCollection();
       renderBinderManager();
@@ -2659,6 +2860,60 @@ function renderBinderManager() {
         persist();
         renderCollection();
         renderBinderManager();
+      });
+    });
+
+    panelLayerInputs.forEach((input) => {
+      input.addEventListener("change", () => {
+        mutateScenePanel(binder, maxPages, themePageSelect, input.dataset.panelId, (panel) => ({
+          ...panel,
+          layer: clamp(Number(input.value) || 12, 1, 40),
+        }));
+      });
+    });
+
+    panelZoomInputs.forEach((input) => {
+      input.addEventListener("change", () => {
+        mutateScenePanel(binder, maxPages, themePageSelect, input.dataset.panelId, (panel) => ({
+          ...panel,
+          zoom: clamp(Number(input.value) || 100, 60, 260),
+        }));
+      });
+    });
+
+    panelFocusXInputs.forEach((input) => {
+      input.addEventListener("change", () => {
+        mutateScenePanel(binder, maxPages, themePageSelect, input.dataset.panelId, (panel) => ({
+          ...panel,
+          focusX: clamp(Number(input.value) || 50, 0, 100),
+        }));
+      });
+    });
+
+    panelFocusYInputs.forEach((input) => {
+      input.addEventListener("change", () => {
+        mutateScenePanel(binder, maxPages, themePageSelect, input.dataset.panelId, (panel) => ({
+          ...panel,
+          focusY: clamp(Number(input.value) || 50, 0, 100),
+        }));
+      });
+    });
+
+    panelBackButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        mutateScenePanel(binder, maxPages, themePageSelect, button.dataset.panelId, (panel) => ({
+          ...panel,
+          layer: clamp(Number(panel.layer || 12) - 1, 1, 40),
+        }));
+      });
+    });
+
+    panelFrontButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        mutateScenePanel(binder, maxPages, themePageSelect, button.dataset.panelId, (panel) => ({
+          ...panel,
+          layer: clamp(Number(panel.layer || 12) + 1, 1, 40),
+        }));
       });
     });
 
@@ -2876,6 +3131,9 @@ function normalizePagingState() {
       sleeveColor: hexSafe(binder.sleeveColor, "#9cdfff"),
       pageTint: hexSafe(binder.pageTint, "#0f1d2f"),
       coverImage: binder.coverImage || "",
+      coverImageScale: clamp(Number(binder.coverImageScale) || 100, 70, 220),
+      coverImageFocusX: clamp(Number(binder.coverImageFocusX) || 50, 0, 100),
+      coverImageFocusY: clamp(Number(binder.coverImageFocusY) || 50, 0, 100),
       pageMethodDefault: cleanText(binder.pageMethodDefault) || "classic",
       pageThemes,
     };
@@ -2939,6 +3197,9 @@ function defaultBinder(name = "Main Binder") {
     sleeveColor: "#9cdfff",
     pageTint: "#0f1d2f",
     coverImage: "",
+    coverImageScale: 100,
+    coverImageFocusX: 50,
+    coverImageFocusY: 50,
     pageMethodDefault: "classic",
     pageThemes: {},
   };

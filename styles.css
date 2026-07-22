@@ -680,21 +680,25 @@ select {
   border: 0;
   color: var(--text);
   text-align: left;
-  padding: 16px 18px;
+  padding: 22px 22px 26px;
   cursor: pointer;
   display: grid;
-  grid-template-columns: 10px 1fr;
-  gap: 12px;
+  grid-template-columns: 14px 1fr;
+  gap: 16px;
   background-size: cover;
   background-position: center;
   position: relative;
+  min-height: 340px;
+  align-items: end;
 }
 
 .binder-cover-card::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(115deg, rgba(2,8,15,0.65), rgba(2,8,15,0.45));
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.06), transparent 22%),
+    linear-gradient(115deg, rgba(2,8,15,0.54), rgba(2,8,15,0.72));
 }
 
 .binder-spine,
@@ -706,23 +710,27 @@ select {
 .binder-spine {
   border-radius: 99px;
   background: linear-gradient(180deg, rgba(255,255,255,.55), rgba(255,255,255,.16));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22), 0 0 18px rgba(255,255,255,0.08);
 }
 
 .binder-cover-copy {
   display: grid;
-  gap: 5px;
+  gap: 10px;
+  align-self: end;
 }
 
 .binder-cover-title {
   font-family: "Bebas Neue", sans-serif;
   letter-spacing: 0.06em;
-  font-size: 31px;
-  line-height: 1;
+  font-size: clamp(40px, 4.8vw, 58px);
+  line-height: 0.94;
+  text-shadow: 0 6px 18px rgba(0, 0, 0, 0.38);
 }
 
 .binder-cover-meta {
-  font-size: 13px;
+  font-size: 14px;
   color: #c9d9ef;
+  max-width: 32ch;
 }
 
 .binder-interior {
@@ -866,6 +874,15 @@ select {
 .page-scene-panel strong {
   font-size: 14px;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+.page-scene-panel.draggable-panel {
+  cursor: grab;
+}
+
+.page-scene-panel.draggable-panel.dragging {
+  cursor: grabbing;
+  opacity: 0.92;
 }
 
 .card-list {
@@ -1037,7 +1054,7 @@ select {
   margin-top: 10px;
   font-weight: 800;
   letter-spacing: 0.04em;
-  min-height: 92px;
+  min-height: 220px;
   background-size: cover;
   background-position: center;
   display: flex;
@@ -1185,6 +1202,25 @@ select {
   font-size: 11px;
 }
 
+.panel-resize-handle {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.88);
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.18);
+}
+
+.panel-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-right: 2px solid rgba(0,0,0,0.55);
+  border-bottom: 2px solid rgba(0,0,0,0.55);
+}
+
 .panel-config-list {
   margin-top: 10px;
   display: grid;
@@ -1196,6 +1232,8 @@ select {
   border-radius: 10px;
   padding: 10px;
   background: rgba(255,255,255,0.03);
+  display: grid;
+  gap: 8px;
 }
 
 .panel-config-head {
@@ -1204,6 +1242,12 @@ select {
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.panel-layer-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .page-scene-panel.book {
