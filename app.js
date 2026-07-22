@@ -17,6 +17,12 @@ const PAGE_METHOD_PRESETS = {
   energy: { label: "Energy Burst", patternStyle: "lava", pageTint: "#21131a", sleeveColor: "#ffb36a", patternStrength: 80 },
 };
 
+const CARD_SIZE_PRESETS = {
+  small: { label: "Small", scale: 72, gap: 6 },
+  medium: { label: "Medium", scale: 86, gap: 8 },
+  showcase: { label: "Showcase", scale: 104, gap: 10 },
+};
+
 const PAGE_LAYOUT_PRESETS = {
   grid: { label: "Full Grid", panels: [] },
   topHero: {
@@ -922,11 +928,16 @@ function renderCollection() {
     runtime.viewPageByBinder[binder.id] = currentPage;
 
     const coverTitle = cleanText(binder.coverTitle) || binder.name;
+    const coverSubtitle = cleanText(binder.coverSubtitle);
+    const coverTitleScale = clamp(Number(binder.coverTitleScale) || 100, 70, 150);
     const coverA = binder.coverColorA || c1;
     const coverB = binder.coverColorB || c2;
     const coverSize = `${clamp(Number(binder.coverImageScale) || 100, 70, 220)}%`;
     const coverPosition = `${clamp(Number(binder.coverImageFocusX) || 50, 0, 100)}% ${clamp(Number(binder.coverImageFocusY) || 50, 0, 100)}%`;
     const pageTheme = getPageTheme(binder, currentPage);
+    const pageCardSizing = getPageCardSizing(binder, pageTheme);
+    const pageCardPreset = getCardSizePresetKey(pageCardSizing.scale, pageCardSizing.gap);
+    const compactList = !!binder.compactList;
     const sleeve = pageTheme.sleeveColor || binder.sleeveColor || "#9cdfff";
     const pageTint = pageTheme.pageTint || binder.pageTint || "#0f1d2f";
     const coverBg = binder.coverImage
@@ -944,10 +955,11 @@ function renderCollection() {
     }).join("");
 
     block.innerHTML = `
-      <button class="binder-cover-card" data-action="toggle-binder" type="button" style="background-image:${coverBg}; background-size:${binder.coverImage ? `${coverSize}, ${coverSize}` : "cover"}; background-position:${binder.coverImage ? `${coverPosition}, ${coverPosition}` : "center"};">
+      <button class="binder-cover-card" data-action="toggle-binder" type="button" style="background-image:${coverBg}; background-size:${binder.coverImage ? `${coverSize}, ${coverSize}` : "cover"}; background-position:${binder.coverImage ? `${coverPosition}, ${coverPosition}` : "center"}; --cover-title-scale:${coverTitleScale / 100};">
         <span class="binder-spine"></span>
         <span class="binder-cover-copy">
           <span class="binder-cover-title">${escapeHtml(coverTitle)}</span>
+          ${coverSubtitle ? `<span class="binder-cover-subtitle">${escapeHtml(coverSubtitle)}</span>` : ""}
           <span class="binder-cover-meta">${cards.length} cards · ${totalPages} page${totalPages === 1 ? "" : "s"}</span>
         </span>
       </button>
@@ -956,6 +968,7 @@ function renderCollection() {
       <header class="binder-header" style="background-image:${coverBg}; background-size:${binder.coverImage ? `${coverSize}, ${coverSize}` : "cover"}; background-position:${binder.coverImage ? `${coverPosition}, ${coverPosition}` : "center"};">
         <div>
           <h3>${escapeHtml(coverTitle)}</h3>
+          ${coverSubtitle ? `<p class="meta">${escapeHtml(coverSubtitle)}</p>` : ""}
           <p class="meta">${cards.length} cards · Page ${currentPage} of ${totalPages} · ${escapeHtml(getPageMethodLabel(pageTheme.method))} Method</p>
         </div>
         <div class="page-controls">
@@ -967,9 +980,14 @@ function renderCollection() {
           <select data-action="jump-page" class="move-page-select">${pageOptions}</select>
           <button class="btn primary small" data-action="add-page" type="button">Add Page</button>
           <button class="btn ghost small" data-action="remove-page" type="button">Remove Page</button>
+          <button class="btn ghost small" data-action="toggle-compact-list" type="button">${compactList ? "Compact: On" : "Compact: Off"}</button>
+          <button class="btn ghost small" data-action="toggle-lock-card-frame" type="button">${binder.lockCardArtFrame ? "Card Art Locked" : "Card Art Unlocked"}</button>
+          <div class="card-preset-actions" aria-label="Card size presets">
+            ${Object.entries(CARD_SIZE_PRESETS).map(([key, preset]) => `<button class="btn ghost small ${pageCardPreset === key ? "active" : ""}" data-action="card-preset" data-preset="${key}" type="button">${escapeHtml(preset.label)}</button>`).join("")}
+          </div>
         </div>
       </header>
-      <div class="binder-grid" data-binder-id="${binder.id}" data-page="${currentPage}"></div>
+      <div class="binder-grid" data-binder-id="${binder.id}" data-page="${currentPage}" style="--slot-scale:${pageCardSizing.scale / 100}; --slot-gap:${pageCardSizing.gap}px;"></div>
       <div class="card-list"></div>
       </div>
     `;
@@ -987,6 +1005,9 @@ function renderCollection() {
     const jumpSelect = block.querySelector('select[data-action="jump-page"]');
     const addBtn = block.querySelector('button[data-action="add-page"]');
     const removeBtn = block.querySelector('button[data-action="remove-page"]');
+    const compactToggleBtn = block.querySelector('button[data-action="toggle-compact-list"]');
+    const lockCardFrameBtn = block.querySelector('button[data-action="toggle-lock-card-frame"]');
+    const cardPresetButtons = block.querySelectorAll('button[data-action="card-preset"]');
     const editBtn = block.querySelector('button[data-action="edit-page"]');
     const bookBtn = block.querySelector('button[data-action="open-book"]');
     prevBtn.disabled = currentPage <= 1;
@@ -1042,6 +1063,29 @@ function renderCollection() {
       status(`Removed page ${totalPages} from ${binder.name}.`);
     });
 
+    compactToggleBtn.addEventListener("click", () => {
+      binder.compactList = !binder.compactList;
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    lockCardFrameBtn.addEventListener("click", () => {
+      binder.lockCardArtFrame = !binder.lockCardArtFrame;
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    cardPresetButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        applyCardSizePresetToPage(binder, currentPage, button.dataset.preset);
+        persist();
+        renderCollection();
+        renderBinderManager();
+      });
+    });
+
     const grid = block.querySelector(".binder-grid");
     applyPageThemeToGrid(grid, pageTheme, pageDoodle);
     renderPageDecorations(grid, binder, currentPage);
@@ -1066,6 +1110,7 @@ function renderCollection() {
         const img = document.createElement("img");
         img.src = slotCard.image;
         img.alt = `${slotCard.name} thumbnail`;
+        applyCardArtFrame(img, binder);
         slot.appendChild(img);
         slot.classList.add("has-card");
         slot.addEventListener("click", () => {
@@ -1131,12 +1176,18 @@ function renderCollection() {
     list.dataset.binderId = binder.id;
     list.dataset.page = String(currentPage);
     list.classList.toggle("dnd-disabled", sortBy !== "binder");
+    list.classList.toggle("compact-list", compactList);
+    const rowHeight = compactList ? 86 : 118;
+    const visibleRows = clamp(sortedCardsOnPage.length || 1, 1, compactList ? 8 : 6);
+    list.style.maxHeight = `${visibleRows * rowHeight}px`;
+    list.style.overflowY = "auto";
 
     sortedCardsOnPage.forEach((card) => {
       list.appendChild(renderCardItem(card, {
         binderId: binder.id,
         page: currentPage,
         totalPages,
+        compactList,
         dndEnabled: sortBy === "binder",
       }));
     });
@@ -1240,6 +1291,10 @@ function renderBinderBookGrid(target, cards, page, binder) {
     `;
     if (card) {
       slot.classList.add("has-card");
+      const slotImage = slot.querySelector("img");
+      if (slotImage) {
+        applyCardArtFrame(slotImage, binder);
+      }
       slot.addEventListener("click", () => {
         openCardDetailModal(card, {
           binderName: binder?.coverTitle || binder?.name || "Binder",
@@ -1250,6 +1305,41 @@ function renderBinderBookGrid(target, cards, page, binder) {
     }
     target.appendChild(slot);
   }
+}
+
+function applyCardArtFrame(imageNode, binder) {
+  if (!imageNode) return;
+  const fit = cleanText(binder?.cardImageFit) || "cover";
+  const zoom = clamp(Number(binder?.cardImageZoom) || 100, 80, 180);
+  const focusX = clamp(Number(binder?.cardImageFocusX) || 50, 0, 100);
+  const focusY = clamp(Number(binder?.cardImageFocusY) || 50, 0, 100);
+
+  imageNode.style.objectFit = fit === "stretch" ? "fill" : fit;
+  imageNode.style.objectPosition = `${focusX}% ${focusY}%`;
+  imageNode.style.transform = `scale(${(zoom / 100).toFixed(3)})`;
+  imageNode.style.transformOrigin = `${focusX}% ${focusY}%`;
+}
+
+function getPageCardSizing(binder, pageTheme) {
+  return {
+    scale: clamp(Number(pageTheme?.cardScale) || Number(binder?.cardScale) || 86, 65, 120),
+    gap: clamp(Number(pageTheme?.cardGap) || Number(binder?.cardGap) || 8, 4, 18),
+  };
+}
+
+function getCardSizePresetKey(scale, gap) {
+  const match = Object.entries(CARD_SIZE_PRESETS).find(([, preset]) => {
+    return Number(scale) === Number(preset.scale) && Number(gap) === Number(preset.gap);
+  });
+  return match?.[0] || "custom";
+}
+
+function applyCardSizePresetToPage(binder, page, presetKey) {
+  const preset = CARD_SIZE_PRESETS[presetKey];
+  if (!binder || !preset) return;
+  const theme = upsertPageTheme(binder, page);
+  theme.cardScale = preset.scale;
+  theme.cardGap = preset.gap;
 }
 
 function getPageCards(binderId, page) {
@@ -1273,6 +1363,12 @@ function getPageTheme(binder, page) {
     sleeveColor: hexSafe(fromMap.sleeveColor, fallbackPreset.sleeveColor || binder.sleeveColor || "#9cdfff"),
     patternStrength: clamp(Number(fromMap.patternStrength || fallbackPreset.patternStrength || 45), 8, 100),
     backgroundImage: cleanText(fromMap.backgroundImage),
+    backgroundImageFit: ["cover", "contain", "stretch"].includes(cleanText(fromMap.backgroundImageFit)) ? cleanText(fromMap.backgroundImageFit) : "cover",
+    backgroundImageZoom: clamp(Number(fromMap.backgroundImageZoom) || 100, 60, 260),
+    backgroundImageFocusX: clamp(Number(fromMap.backgroundImageFocusX) || 50, 0, 100),
+    backgroundImageFocusY: clamp(Number(fromMap.backgroundImageFocusY) || 50, 0, 100),
+    cardScale: clamp(Number(fromMap.cardScale) || Number(binder.cardScale) || 86, 65, 120),
+    cardGap: clamp(Number(fromMap.cardGap) || Number(binder.cardGap) || 8, 4, 18),
     designTitle: cleanText(fromMap.designTitle),
     layoutPreset: legacyLayoutPreset,
     sceneImage: legacySceneImage,
@@ -1297,6 +1393,12 @@ function upsertPageTheme(binder, page) {
     sleeveColor: current.sleeveColor,
     patternStrength: current.patternStrength,
     backgroundImage: current.backgroundImage,
+    backgroundImageFit: current.backgroundImageFit,
+    backgroundImageZoom: current.backgroundImageZoom,
+    backgroundImageFocusX: current.backgroundImageFocusX,
+    backgroundImageFocusY: current.backgroundImageFocusY,
+    cardScale: current.cardScale,
+    cardGap: current.cardGap,
     designTitle: current.designTitle,
     layoutPreset: current.layoutPreset,
     sceneImage: current.sceneImage,
@@ -1364,6 +1466,7 @@ function normalizeScenePanel(panel, index) {
     rowSpan: clamp(Number(panel.rowSpan) || 1, 1, 3),
     title: cleanText(panel.title) || "Scene Art",
     image: cleanText(panel.image),
+    fit: ["cover", "contain", "stretch"].includes(cleanText(panel.fit)) ? cleanText(panel.fit) : "cover",
     zoom: clamp(Number(panel.zoom) || 100, 60, 260),
     focusX: clamp(Number(panel.focusX) || 50, 0, 100),
     focusY: clamp(Number(panel.focusY) || 50, 0, 100),
@@ -1532,11 +1635,13 @@ function applyScenePanelBackgroundStyles(node, pageTheme, panel) {
   const zoom = clamp(Number(panel?.zoom) || 100, 60, 260);
   const focusX = clamp(Number(panel?.focusX) || 50, 0, 100);
   const focusY = clamp(Number(panel?.focusY) || 50, 0, 100);
+  const fit = cleanText(panel?.fit) || "cover";
   const hasImageLayer = !!(cleanText(panel?.image) || cleanText(pageTheme?.sceneImage) || cleanText(pageTheme?.backgroundImage));
+  const imageLayerSize = fit === "contain" ? "contain" : fit === "stretch" ? "100% 100%" : `${zoom}%`;
 
   node.style.backgroundImage = buildScenePanelBackground(pageTheme, panel);
   if (hasImageLayer) {
-    node.style.backgroundSize = `cover, ${zoom}%, cover`;
+    node.style.backgroundSize = `cover, ${imageLayerSize}, cover`;
     node.style.backgroundPosition = `center, ${focusX}% ${focusY}%, center`;
     node.style.backgroundRepeat = "no-repeat, no-repeat, no-repeat";
   } else {
@@ -1709,19 +1814,41 @@ function startScenePanelResize(event, editor, binderId, page, panelId) {
 
 function applyPageThemeToGrid(grid, pageTheme, pageDoodle) {
   if (!grid) return;
+  const bgLayerStyle = getPageBackgroundLayerStyle(pageTheme);
   grid.style.backgroundColor = pageTheme.pageTint || "#0f1d2f";
   grid.style.backgroundImage = buildPageBackgroundImage(pageTheme, pageDoodle);
-  grid.style.backgroundSize = pageTheme.backgroundImage
-    ? "cover, cover, 220px 220px, 18px 18px"
-    : "cover, 220px 220px, 18px 18px";
-  grid.style.backgroundPosition = pageTheme.backgroundImage
-    ? "center, center, center, center"
-    : "center, center, center";
-  grid.style.backgroundRepeat = pageTheme.backgroundImage
-    ? "no-repeat, no-repeat, repeat, repeat"
-    : "no-repeat, repeat, repeat";
+  grid.style.backgroundSize = bgLayerStyle.size;
+  grid.style.backgroundPosition = bgLayerStyle.position;
+  grid.style.backgroundRepeat = bgLayerStyle.repeat;
   grid.style.setProperty("--page-rim", pageTheme.sleeveColor || "#9cdfff");
   grid.style.setProperty("--page-glow", getMethodGlow(pageTheme.method, pageTheme.sleeveColor));
+}
+
+function getPageBackgroundLayerStyle(pageTheme) {
+  const hasBackgroundImage = !!cleanText(pageTheme?.backgroundImage);
+  const fit = cleanText(pageTheme?.backgroundImageFit) || "cover";
+  const zoom = clamp(Number(pageTheme?.backgroundImageZoom) || 100, 60, 260);
+  const focusX = clamp(Number(pageTheme?.backgroundImageFocusX) || 50, 0, 100);
+  const focusY = clamp(Number(pageTheme?.backgroundImageFocusY) || 50, 0, 100);
+  const imageLayerSize = fit === "contain"
+    ? "contain"
+    : fit === "stretch"
+      ? "100% 100%"
+      : `${zoom}%`;
+
+  if (hasBackgroundImage) {
+    return {
+      size: `cover, ${imageLayerSize}, 220px 220px, 18px 18px`,
+      position: `center, ${focusX}% ${focusY}%, center, center`,
+      repeat: "no-repeat, no-repeat, repeat, repeat",
+    };
+  }
+
+  return {
+    size: "cover, 220px 220px, 18px 18px",
+    position: "center, center, center",
+    repeat: "no-repeat, repeat, repeat",
+  };
 }
 
 function buildPageBackgroundImage(pageTheme, pageDoodle) {
@@ -1757,6 +1884,14 @@ function buildPagePreviewBackground(pageTheme) {
   }
   layers.push(`url(${doodle})`);
   return layers.join(", ");
+}
+
+function buildPagePreviewStyle(pageTheme) {
+  const bgLayerStyle = getPageBackgroundLayerStyle(pageTheme);
+  const previewSize = bgLayerStyle.size.replace(", 18px 18px", "");
+  const previewPosition = bgLayerStyle.position.replace(", center", "");
+  const previewRepeat = bgLayerStyle.repeat.replace(", repeat", "");
+  return `background-image:${buildPagePreviewBackground(pageTheme)}; background-size:${previewSize}; background-position:${previewPosition}; background-repeat:${previewRepeat};`;
 }
 
 function renderPageDecorations(grid, binder, page) {
@@ -1939,7 +2074,9 @@ function renderCardItem(card, context) {
     addTag(tags, `Paid $${card.purchasePrice.toFixed(2)}`);
   }
 
-  chartWrap.innerHTML = renderSparklineSvg(getCardHistorySeries(card), money(card.rawValue || 0));
+  chartWrap.innerHTML = context?.compactList
+    ? ""
+    : renderSparklineSvg(getCardHistorySeries(card), money(card.rawValue || 0));
 
   const totalPages = Number(context?.totalPages || 1);
   moveSelect.innerHTML = Array.from({ length: totalPages }, (_, i) => {
@@ -2371,6 +2508,8 @@ function renderBinderManager() {
 
     const [c1, c2] = BINDER_STYLES[binder.style] || BINDER_STYLES.ocean;
     const coverTitle = binder.coverTitle || binder.name;
+    const coverSubtitle = cleanText(binder.coverSubtitle);
+    const coverTitleScale = clamp(Number(binder.coverTitleScale) || 100, 70, 150);
     const coverA = binder.coverColorA || c1;
     const coverB = binder.coverColorB || c2;
     const sleeve = binder.sleeveColor || "#9cdfff";
@@ -2378,9 +2517,18 @@ function renderBinderManager() {
     const coverScale = clamp(Number(binder.coverImageScale) || 100, 70, 220);
     const coverFocusX = clamp(Number(binder.coverImageFocusX) || 50, 0, 100);
     const coverFocusY = clamp(Number(binder.coverImageFocusY) || 50, 0, 100);
+    const cardArtLocked = !!binder.lockCardArtFrame;
+    const cardImageFit = cleanText(binder.cardImageFit) || "cover";
+    const cardImageZoom = clamp(Number(binder.cardImageZoom) || 100, 80, 180);
+    const cardImageFocusX = clamp(Number(binder.cardImageFocusX) || 50, 0, 100);
+    const cardImageFocusY = clamp(Number(binder.cardImageFocusY) || 50, 0, 100);
     const maxPages = Math.max(1, Number(binder.pages) || 1);
     const customPage = clamp(Number(runtime.viewPageByBinder[binder.id] || 1), 1, maxPages);
     const customTheme = getPageTheme(binder, customPage);
+    const pageImageFit = cleanText(customTheme.backgroundImageFit) || "cover";
+    const pageImageZoom = clamp(Number(customTheme.backgroundImageZoom) || 100, 60, 260);
+    const pageImageFocusX = clamp(Number(customTheme.backgroundImageFocusX) || 50, 0, 100);
+    const pageImageFocusY = clamp(Number(customTheme.backgroundImageFocusY) || 50, 0, 100);
     const methodOptions = Object.entries(PAGE_METHOD_PRESETS)
       .map(([key, preset]) => `<option value="${key}" ${key === customTheme.method ? "selected" : ""}>${escapeHtml(preset.label)}</option>`)
       .join("");
@@ -2431,6 +2579,14 @@ function renderBinderManager() {
           <input type="file" accept="image/*" data-action="panel-image" data-panel-id="${panel.id}" />
         </label>
         <button class="btn ghost small" type="button" data-action="panel-image-clear" data-panel-id="${panel.id}">Clear Panel Image</button>
+        <label>
+          Art fit
+          <select data-action="panel-fit" data-panel-id="${panel.id}">
+            <option value="cover" ${(cleanText(panel.fit) || "cover") === "cover" ? "selected" : ""}>Cover</option>
+            <option value="contain" ${cleanText(panel.fit) === "contain" ? "selected" : ""}>Contain</option>
+            <option value="stretch" ${cleanText(panel.fit) === "stretch" ? "selected" : ""}>Stretch</option>
+          </select>
+        </label>
         <label>
           Layer (${Number(panel.layer || 12)})
           <input type="range" min="1" max="40" step="1" value="${Number(panel.layer || 12)}" data-action="panel-layer" data-panel-id="${panel.id}" />
@@ -2486,6 +2642,10 @@ function renderBinderManager() {
           <input type="text" value="${escapeAttr(coverTitle)}" data-action="cover-title" />
         </label>
         <label>
+          Cover subtitle
+          <input type="text" value="${escapeAttr(coverSubtitle)}" data-action="cover-subtitle" placeholder="e.g. Fire & Electric Set" />
+        </label>
+        <label>
           Cover image
           <input type="file" accept="image/*" data-action="cover-image" />
         </label>
@@ -2517,10 +2677,46 @@ function renderBinderManager() {
           Cover focus Y (${coverFocusY}%)
           <input type="range" min="0" max="100" step="1" value="${coverFocusY}" data-action="cover-focus-y" />
         </label>
+        <label>
+          Cover title size (${coverTitleScale}%)
+          <input type="range" min="70" max="150" step="1" value="${coverTitleScale}" data-action="cover-title-size" />
+        </label>
+        <label>
+          Card size (${clamp(Number(binder.cardScale) || 86, 65, 120)}%)
+          <input type="range" min="65" max="120" step="1" value="${clamp(Number(binder.cardScale) || 86, 65, 120)}" data-action="card-scale" />
+        </label>
+        <label>
+          Card gap (${clamp(Number(binder.cardGap) || 8, 4, 18)}px)
+          <input type="range" min="4" max="18" step="1" value="${clamp(Number(binder.cardGap) || 8, 4, 18)}" data-action="card-gap" />
+        </label>
+        <label>
+          Card art fit
+          <select data-action="card-image-fit" ${cardArtLocked ? "disabled" : ""}>
+            <option value="cover" ${cardImageFit === "cover" ? "selected" : ""}>Cover</option>
+            <option value="contain" ${cardImageFit === "contain" ? "selected" : ""}>Contain</option>
+            <option value="stretch" ${cardImageFit === "stretch" ? "selected" : ""}>Stretch</option>
+          </select>
+        </label>
+        <label>
+          Card art zoom (${cardImageZoom}%)
+          <input type="range" min="80" max="180" step="1" value="${cardImageZoom}" data-action="card-image-zoom" ${cardArtLocked ? "disabled" : ""} />
+        </label>
+        <label>
+          Card art focus X (${cardImageFocusX}%)
+          <input type="range" min="0" max="100" step="1" value="${cardImageFocusX}" data-action="card-image-focus-x" ${cardArtLocked ? "disabled" : ""} />
+        </label>
+        <label>
+          Card art focus Y (${cardImageFocusY}%)
+          <input type="range" min="0" max="100" step="1" value="${cardImageFocusY}" data-action="card-image-focus-y" ${cardArtLocked ? "disabled" : ""} />
+        </label>
+        <label class="toggle-inline">
+          Lock card art framing
+          <input type="checkbox" data-action="lock-card-frame" ${cardArtLocked ? "checked" : ""} />
+        </label>
         <button class="btn ghost small" data-action="clear-cover" type="button">Clear Cover Image</button>
       </div>
 
-      <div class="cover-preview" style="background-image:${binder.coverImage ? `linear-gradient(rgba(3,12,22,.28), rgba(3,12,22,.55)), url(${binder.coverImage})` : `linear-gradient(120deg, ${coverA}, ${coverB})`}; background-size:${binder.coverImage ? `${coverScale}%, ${coverScale}%` : "cover"}; background-position:${binder.coverImage ? `${coverFocusX}% ${coverFocusY}%, ${coverFocusX}% ${coverFocusY}%` : "center"};">${escapeHtml(coverTitle)}</div>
+      <div class="cover-preview" style="background-image:${binder.coverImage ? `linear-gradient(rgba(3,12,22,.28), rgba(3,12,22,.55)), url(${binder.coverImage})` : `linear-gradient(120deg, ${coverA}, ${coverB})`}; background-size:${binder.coverImage ? `${coverScale}%, ${coverScale}%` : "cover"}; background-position:${binder.coverImage ? `${coverFocusX}% ${coverFocusY}%, ${coverFocusX}% ${coverFocusY}%` : "center"}; --cover-title-scale:${coverTitleScale / 100};"><strong class="cover-preview-title">${escapeHtml(coverTitle)}</strong>${coverSubtitle ? `<span class="cover-preview-subtitle">${escapeHtml(coverSubtitle)}</span>` : ""}</div>
       <div class="sleeve-preview" style="border-color:${sleeve}; background-color:${pageTint};"></div>
 
       <div class="michi-page-lab">
@@ -2559,6 +2755,26 @@ function renderBinderManager() {
             <input type="file" accept="image/*" data-action="theme-image" />
           </label>
           <label>
+            Page art fit
+            <select data-action="theme-image-fit">
+              <option value="cover" ${pageImageFit === "cover" ? "selected" : ""}>Cover</option>
+              <option value="contain" ${pageImageFit === "contain" ? "selected" : ""}>Contain</option>
+              <option value="stretch" ${pageImageFit === "stretch" ? "selected" : ""}>Stretch</option>
+            </select>
+          </label>
+          <label>
+            Page art zoom (${pageImageZoom}%)
+            <input type="range" min="60" max="260" step="1" value="${pageImageZoom}" data-action="theme-image-zoom" />
+          </label>
+          <label>
+            Page art focus X (${pageImageFocusX}%)
+            <input type="range" min="0" max="100" step="1" value="${pageImageFocusX}" data-action="theme-image-focus-x" />
+          </label>
+          <label>
+            Page art focus Y (${pageImageFocusY}%)
+            <input type="range" min="0" max="100" step="1" value="${pageImageFocusY}" data-action="theme-image-focus-y" />
+          </label>
+          <label>
             Design title
             <input type="text" value="${escapeAttr(customTheme.designTitle || "")}" data-action="theme-title" placeholder="e.g. Neon Sakura" />
           </label>
@@ -2569,7 +2785,7 @@ function renderBinderManager() {
         </div>
         <div class="michi-workbench">
           <div class="michi-workbench-preview">
-            <div class="page-style-preview" style="background-image:${buildPagePreviewBackground(customTheme)}">
+            <div class="page-style-preview" style="${buildPagePreviewStyle(customTheme)}">
               <span>${escapeHtml(customTheme.designTitle || `${getPageMethodLabel(customTheme.method)} Page ${customPage}`)}</span>
             </div>
             <div class="michi-lab-note muted">Live preview: drag and resize panels here. This stays visible while you edit.</div>
@@ -2616,6 +2832,7 @@ function renderBinderManager() {
     const styleSelect = wrap.querySelector('select[data-action="style"]');
     const deleteBtn = wrap.querySelector('button[data-action="delete"]');
     const coverTitleInput = wrap.querySelector('input[data-action="cover-title"]');
+    const coverSubtitleInput = wrap.querySelector('input[data-action="cover-subtitle"]');
     const coverImageInput = wrap.querySelector('input[data-action="cover-image"]');
     const pageTintInput = wrap.querySelector('input[data-action="page-tint"]');
     const coverAInput = wrap.querySelector('input[data-action="cover-a"]');
@@ -2624,6 +2841,14 @@ function renderBinderManager() {
     const coverScaleInput = wrap.querySelector('input[data-action="cover-scale"]');
     const coverFocusXInput = wrap.querySelector('input[data-action="cover-focus-x"]');
     const coverFocusYInput = wrap.querySelector('input[data-action="cover-focus-y"]');
+    const coverTitleSizeInput = wrap.querySelector('input[data-action="cover-title-size"]');
+    const cardScaleInput = wrap.querySelector('input[data-action="card-scale"]');
+    const cardGapInput = wrap.querySelector('input[data-action="card-gap"]');
+    const cardImageFitSelect = wrap.querySelector('select[data-action="card-image-fit"]');
+    const cardImageZoomInput = wrap.querySelector('input[data-action="card-image-zoom"]');
+    const cardImageFocusXInput = wrap.querySelector('input[data-action="card-image-focus-x"]');
+    const cardImageFocusYInput = wrap.querySelector('input[data-action="card-image-focus-y"]');
+    const lockCardFrameInput = wrap.querySelector('input[data-action="lock-card-frame"]');
     const clearCoverBtn = wrap.querySelector('button[data-action="clear-cover"]');
     const themePageSelect = wrap.querySelector('select[data-action="theme-page"]');
     const themeMethodSelect = wrap.querySelector('select[data-action="theme-method"]');
@@ -2632,6 +2857,10 @@ function renderBinderManager() {
     const themeSleeveInput = wrap.querySelector('input[data-action="theme-sleeve"]');
     const themeStrengthInput = wrap.querySelector('input[data-action="theme-strength"]');
     const themeImageInput = wrap.querySelector('input[data-action="theme-image"]');
+    const themeImageFitSelect = wrap.querySelector('select[data-action="theme-image-fit"]');
+    const themeImageZoomInput = wrap.querySelector('input[data-action="theme-image-zoom"]');
+    const themeImageFocusXInput = wrap.querySelector('input[data-action="theme-image-focus-x"]');
+    const themeImageFocusYInput = wrap.querySelector('input[data-action="theme-image-focus-y"]');
     const themeTitleInput = wrap.querySelector('input[data-action="theme-title"]');
     const themeSceneImageInput = wrap.querySelector('input[data-action="theme-scene-image"]');
     const themeClearImageBtn = wrap.querySelector('button[data-action="theme-clear-image"]');
@@ -2644,6 +2873,7 @@ function renderBinderManager() {
     const panelRemoveButtons = wrap.querySelectorAll('button[data-action="remove-panel"]');
     const panelTitleInputs = wrap.querySelectorAll('input[data-action="panel-title"]');
     const panelShapeSelects = wrap.querySelectorAll('select[data-action="panel-shape"]');
+    const panelFitSelects = wrap.querySelectorAll('select[data-action="panel-fit"]');
     const panelWidthSelects = wrap.querySelectorAll('select[data-action="panel-width"]');
     const panelHeightSelects = wrap.querySelectorAll('select[data-action="panel-height"]');
     const panelImageInputs = wrap.querySelectorAll('input[data-action="panel-image"]');
@@ -2692,6 +2922,13 @@ function renderBinderManager() {
 
     coverTitleInput.addEventListener("change", () => {
       binder.coverTitle = cleanText(coverTitleInput.value) || binder.name;
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    coverSubtitleInput.addEventListener("change", () => {
+      binder.coverSubtitle = cleanText(coverSubtitleInput.value);
       persist();
       renderCollection();
       renderBinderManager();
@@ -2751,6 +2988,66 @@ function renderBinderManager() {
 
     coverFocusYInput.addEventListener("change", () => {
       binder.coverImageFocusY = clamp(Number(coverFocusYInput.value) || 50, 0, 100);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    coverTitleSizeInput.addEventListener("change", () => {
+      binder.coverTitleScale = clamp(Number(coverTitleSizeInput.value) || 100, 70, 150);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    cardScaleInput.addEventListener("input", () => {
+      binder.cardScale = clamp(Number(cardScaleInput.value) || 86, 65, 120);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    cardGapInput.addEventListener("input", () => {
+      binder.cardGap = clamp(Number(cardGapInput.value) || 8, 4, 18);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    cardImageFitSelect.addEventListener("change", () => {
+      if (binder.lockCardArtFrame) return;
+      binder.cardImageFit = cardImageFitSelect.value;
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    cardImageZoomInput.addEventListener("input", () => {
+      if (binder.lockCardArtFrame) return;
+      binder.cardImageZoom = clamp(Number(cardImageZoomInput.value) || 100, 80, 180);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    cardImageFocusXInput.addEventListener("input", () => {
+      if (binder.lockCardArtFrame) return;
+      binder.cardImageFocusX = clamp(Number(cardImageFocusXInput.value) || 50, 0, 100);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    cardImageFocusYInput.addEventListener("input", () => {
+      if (binder.lockCardArtFrame) return;
+      binder.cardImageFocusY = clamp(Number(cardImageFocusYInput.value) || 50, 0, 100);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    lockCardFrameInput.addEventListener("change", () => {
+      binder.lockCardArtFrame = !!lockCardFrameInput.checked;
       persist();
       renderCollection();
       renderBinderManager();
@@ -2829,6 +3126,42 @@ function renderBinderManager() {
       renderCollection();
       renderBinderManager();
       status(`Updated Michi page art for ${binder.name} page ${page}.`);
+    });
+
+    themeImageFitSelect.addEventListener("change", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      theme.backgroundImageFit = themeImageFitSelect.value;
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    themeImageZoomInput.addEventListener("input", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      theme.backgroundImageZoom = clamp(Number(themeImageZoomInput.value) || 100, 60, 260);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    themeImageFocusXInput.addEventListener("input", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      theme.backgroundImageFocusX = clamp(Number(themeImageFocusXInput.value) || 50, 0, 100);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    themeImageFocusYInput.addEventListener("input", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      theme.backgroundImageFocusY = clamp(Number(themeImageFocusYInput.value) || 50, 0, 100);
+      persist();
+      renderCollection();
+      renderBinderManager();
     });
 
     themeSceneImageInput.addEventListener("change", async () => {
@@ -2915,6 +3248,15 @@ function renderBinderManager() {
         persist();
         renderCollection();
         renderBinderManager();
+      });
+    });
+
+    panelFitSelects.forEach((select) => {
+      select.addEventListener("change", () => {
+        mutateScenePanel(binder, maxPages, themePageSelect, select.dataset.panelId, (panel) => ({
+          ...panel,
+          fit: ["cover", "contain", "stretch"].includes(select.value) ? select.value : "cover",
+        }));
       });
     });
 
@@ -3102,6 +3444,12 @@ function renderBinderManager() {
           sleeveColor: source.sleeveColor,
           patternStrength: source.patternStrength,
           backgroundImage: source.backgroundImage,
+          backgroundImageFit: source.backgroundImageFit,
+          backgroundImageZoom: source.backgroundImageZoom,
+          backgroundImageFocusX: source.backgroundImageFocusX,
+          backgroundImageFocusY: source.backgroundImageFocusY,
+          cardScale: source.cardScale,
+          cardGap: source.cardGap,
           designTitle: source.designTitle,
           layoutPreset: source.layoutPreset,
           sceneImage: source.sceneImage,
@@ -3233,6 +3581,12 @@ function normalizePagingState() {
           sleeveColor: hexSafe(theme?.sleeveColor, "#9cdfff"),
           patternStrength: clamp(Number(theme?.patternStrength || 45), 8, 100),
           backgroundImage: cleanText(theme?.backgroundImage),
+          backgroundImageFit: ["cover", "contain", "stretch"].includes(cleanText(theme?.backgroundImageFit)) ? cleanText(theme?.backgroundImageFit) : "cover",
+          backgroundImageZoom: clamp(Number(theme?.backgroundImageZoom) || 100, 60, 260),
+          backgroundImageFocusX: clamp(Number(theme?.backgroundImageFocusX) || 50, 0, 100),
+          backgroundImageFocusY: clamp(Number(theme?.backgroundImageFocusY) || 50, 0, 100),
+          cardScale: clamp(Number(theme?.cardScale) || Number(binder?.cardScale) || 86, 65, 120),
+          cardGap: clamp(Number(theme?.cardGap) || Number(binder?.cardGap) || 8, 4, 18),
           designTitle: cleanText(theme?.designTitle),
           layoutPreset: cleanText(theme?.layoutPreset) || "grid",
           sceneImage: cleanText(theme?.sceneImage),
@@ -3246,6 +3600,8 @@ function normalizePagingState() {
       ...binder,
       pages: Math.max(1, Number(binder.pages) || 1),
       coverTitle: cleanText(binder.coverTitle) || cleanText(binder.name) || "Main Binder",
+      coverSubtitle: cleanText(binder.coverSubtitle),
+      coverTitleScale: clamp(Number(binder.coverTitleScale) || 100, 70, 150),
       coverColorA: hexSafe(binder.coverColorA, a),
       coverColorB: hexSafe(binder.coverColorB, b),
       sleeveColor: hexSafe(binder.sleeveColor, "#9cdfff"),
@@ -3254,6 +3610,14 @@ function normalizePagingState() {
       coverImageScale: clamp(Number(binder.coverImageScale) || 100, 70, 220),
       coverImageFocusX: clamp(Number(binder.coverImageFocusX) || 50, 0, 100),
       coverImageFocusY: clamp(Number(binder.coverImageFocusY) || 50, 0, 100),
+      cardScale: clamp(Number(binder.cardScale) || 86, 65, 120),
+      cardGap: clamp(Number(binder.cardGap) || 8, 4, 18),
+      compactList: !!binder.compactList,
+      lockCardArtFrame: !!binder.lockCardArtFrame,
+      cardImageFit: ["cover", "contain", "stretch"].includes(cleanText(binder.cardImageFit)) ? cleanText(binder.cardImageFit) : "cover",
+      cardImageZoom: clamp(Number(binder.cardImageZoom) || 100, 80, 180),
+      cardImageFocusX: clamp(Number(binder.cardImageFocusX) || 50, 0, 100),
+      cardImageFocusY: clamp(Number(binder.cardImageFocusY) || 50, 0, 100),
       pageMethodDefault: cleanText(binder.pageMethodDefault) || "classic",
       pageThemes,
     };
@@ -3312,6 +3676,8 @@ function defaultBinder(name = "Main Binder") {
     style: "ocean",
     pages: 1,
     coverTitle: name,
+    coverSubtitle: "",
+    coverTitleScale: 100,
     coverColorA: a,
     coverColorB: b,
     sleeveColor: "#9cdfff",
@@ -3320,6 +3686,14 @@ function defaultBinder(name = "Main Binder") {
     coverImageScale: 100,
     coverImageFocusX: 50,
     coverImageFocusY: 50,
+    cardScale: 86,
+    cardGap: 8,
+    compactList: false,
+    lockCardArtFrame: false,
+    cardImageFit: "cover",
+    cardImageZoom: 100,
+    cardImageFocusX: 50,
+    cardImageFocusY: 50,
     pageMethodDefault: "classic",
     pageThemes: {},
   };
