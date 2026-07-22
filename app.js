@@ -120,6 +120,8 @@ const runtime = {
   imageBitmap: null,
   viewPageByBinder: {},
   dragCardId: null,
+  openBinders: {},
+  pageDoodles: {},
   editor: {
     open: false,
     binderId: null,
@@ -447,7 +449,15 @@ async function runOcr(dataUrl) {
         }
       },
     });
-    return (result?.data?.text || "").replace(/\s+/g, " ").trim();
+
+    // A second pass on an enhanced top-strip helps recover the card name line.
+    const topStrip = await makeTopStripDataUrl(dataUrl);
+    const topResult = await window.Tesseract.recognize(topStrip, "eng");
+
+    return [result?.data?.text || "", topResult?.data?.text || ""]
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
   } catch {
     return "";
   }
@@ -456,8 +466,9 @@ async function runOcr(dataUrl) {
 async function identifyCard(ocrText) {
   const cleaned = sanitizeOcrText(ocrText);
   const probableName = guessPokemonName(cleaned);
+  const tokens = extractSearchTokens(cleaned);
 
-  if (!probableName) {
+  if (!probableName && !tokens.length) {
     return {
       found: false,
       name: "Unknown Card",
@@ -468,21 +479,48 @@ async function identifyCard(ocrText) {
     };
   }
 
-  const url = `https://api.pokemontcg.io/v2/cards?q=name:${encodeURIComponent('"' + probableName + '"')}&pageSize=5`;
+  const candidates = [];
+  const seen = new Set();
+
+  const queries = [];
+  if (probableName) {
+    queries.push(`name:${encodeURIComponent('"' + probableName + '"')}`);
+    queries.push(`name:*${encodeURIComponent(probableName)}*`);
+  }
+  tokens.slice(0, 6).forEach((token) => {
+    queries.push(`name:*${encodeURIComponent(token)}*`);
+  });
+
   try {
-    const resp = await fetch(url);
-    const json = await resp.json();
-    const first = json?.data?.[0];
-    if (!first) {
+    for (const q of queries) {
+      const url = `https://api.pokemontcg.io/v2/cards?q=${q}&pageSize=35`;
+      const resp = await fetch(url);
+      const json = await resp.json();
+      const rows = Array.isArray(json?.data) ? json.data : [];
+      rows.forEach((row) => {
+        if (!row?.id || seen.has(row.id)) return;
+        seen.add(row.id);
+        candidates.push(row);
+      });
+      if (candidates.length >= 120) break;
+    }
+
+    if (!candidates.length) {
       return {
         found: false,
-        name: titleCase(probableName),
+        name: titleCase(probableName || tokens[0] || "Unknown Card"),
         set: "Unknown Set",
         number: "",
         rarity: "",
         confidence: "medium",
       };
     }
+
+    const scored = candidates
+      .map((card) => ({ card, score: scoreCardMatch(card, cleaned) }))
+      .sort((a, b) => b.score - a.score);
+
+    const first = scored[0].card;
 
     return {
       found: true,
@@ -496,7 +534,7 @@ async function identifyCard(ocrText) {
   } catch {
     return {
       found: false,
-      name: titleCase(probableName),
+      name: titleCase(probableName || tokens[0] || "Unknown Card"),
       set: "Unknown Set",
       number: "",
       rarity: "",
@@ -685,7 +723,8 @@ function renderCollection() {
 
   binders.forEach(({ binder, cards, allCards }) => {
     const block = document.createElement("section");
-    block.className = "binder-block";
+    const isOpen = !!runtime.openBinders[binder.id];
+    block.className = `binder-block ${isOpen ? "open" : "closed"}`;
 
     const [c1, c2] = BINDER_STYLES[binder.style] || BINDER_STYLES.ocean;
     const totalPages = Math.max(1, Number(binder.pages) || 1);
@@ -700,6 +739,7 @@ function renderCollection() {
     const coverBg = binder.coverImage
       ? `linear-gradient(rgba(3,12,22,.22), rgba(3,12,22,.62)), url(${binder.coverImage})`
       : `linear-gradient(120deg, ${coverA}40, ${coverB}40)`;
+    const pageDoodle = getPageDoodlePattern(binder.style, currentPage);
 
     const cardsOnPage = cards.filter((c) => Number(c.page || 1) === currentPage);
     const allCardsOnPage = allCards.filter((c) => Number(c.page || 1) === currentPage);
@@ -711,12 +751,22 @@ function renderCollection() {
     }).join("");
 
     block.innerHTML = `
+      <button class="binder-cover-card" data-action="toggle-binder" type="button" style="background-image:${coverBg};">
+        <span class="binder-spine"></span>
+        <span class="binder-cover-copy">
+          <span class="binder-cover-title">${escapeHtml(coverTitle)}</span>
+          <span class="binder-cover-meta">${cards.length} cards · ${totalPages} page${totalPages === 1 ? "" : "s"}</span>
+        </span>
+      </button>
+
+      <div class="binder-interior">
       <header class="binder-header" style="background-image:${coverBg}; background-size:cover; background-position:center;">
         <div>
           <h3>${escapeHtml(coverTitle)}</h3>
           <p class="meta">${cards.length} cards · Page ${currentPage} of ${totalPages}</p>
         </div>
         <div class="page-controls">
+          <button class="btn ghost small" data-action="toggle-binder" type="button">Close</button>
           <button class="btn ghost small" data-action="open-book" type="button">Open Book</button>
           <button class="btn ghost small" data-action="edit-page" type="button">Edit Page</button>
           <button class="btn ghost small" data-action="prev-page" type="button">Prev</button>
@@ -726,9 +776,18 @@ function renderCollection() {
           <button class="btn ghost small" data-action="remove-page" type="button">Remove Page</button>
         </div>
       </header>
-      <div class="binder-grid" data-binder-id="${binder.id}" data-page="${currentPage}" style="background-color:${pageTint}"></div>
+      <div class="binder-grid" data-binder-id="${binder.id}" data-page="${currentPage}" style="background-color:${pageTint}; background-image:url(${pageDoodle}), radial-gradient(circle at center, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px);"></div>
       <div class="card-list"></div>
+      </div>
     `;
+
+    const toggleButtons = block.querySelectorAll('button[data-action="toggle-binder"]');
+    toggleButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        runtime.openBinders[binder.id] = !runtime.openBinders[binder.id];
+        renderCollection();
+      });
+    });
 
     const prevBtn = block.querySelector('button[data-action="prev-page"]');
     const nextBtn = block.querySelector('button[data-action="next-page"]');
@@ -970,6 +1029,36 @@ function getPageCards(binderId, page) {
     state.cards.filter((card) => card.binderId === binderId && Number(card.page || 1) === Number(page)),
     "binder",
   );
+}
+
+function getPageDoodlePattern(style, page) {
+  const key = `${style}:${page}`;
+  if (runtime.pageDoodles[key]) return runtime.pageDoodles[key];
+
+  const palette = {
+    ocean: ["#7fdcff", "#6effd4"],
+    lava: ["#ffb36a", "#ff788f"],
+    moss: ["#8ff4af", "#5fd3c8"],
+    static: ["#ffe883", "#84bfff"],
+    prism: ["#f3a5ff", "#8de9ff"],
+  };
+  const [a, b] = palette[style] || palette.ocean;
+  const shift = (Number(page || 1) * 7) % 22;
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220' viewBox='0 0 220 220'>
+    <g fill='none' stroke='${a}' stroke-opacity='.19' stroke-width='2'>
+      <circle cx='40' cy='42' r='12'/>
+      <circle cx='178' cy='74' r='16'/>
+      <path d='M20 ${130 + shift}c18-10 42-9 57 1s34 9 48 0 31-10 45-1'/>
+    </g>
+    <g fill='${b}' fill-opacity='.16'>
+      <polygon points='102,25 110,42 129,45 115,58 118,77 102,68 86,77 89,58 75,45 94,42'/>
+      <rect x='152' y='152' width='22' height='22' rx='4' transform='rotate(17 163 163)'/>
+      <circle cx='58' cy='170' r='8'/>
+    </g>
+  </svg>`;
+
+  runtime.pageDoodles[key] = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  return runtime.pageDoodles[key];
 }
 
 function renderCardItem(card, context) {
@@ -2190,14 +2279,101 @@ function guessPokemonName(ocrText) {
   const lower = ocrText.toLowerCase();
   const exact = known.find((name) => lower.includes(name));
   if (exact) return exact;
+  return "";
+}
 
-  const tokenCandidates = lower
+function extractSearchTokens(ocrText) {
+  const stop = new Set([
+    "basic", "stage", "pokemon", "trainer", "energy", "attack", "damage", "hp", "item", "supporter",
+    "coin", "flip", "your", "this", "that", "with", "from", "and", "the", "for", "can", "use",
+  ]);
+  const words = String(ocrText || "")
+    .toLowerCase()
     .split(" ")
-    .filter((w) => w.length >= 4 && /^[a-z-]+$/.test(w))
-    .slice(0, 16);
+    .map((w) => w.replace(/[^a-z0-9-]/g, ""))
+    .filter((w) => w.length >= 4 && !stop.has(w));
+  return [...new Set(words)];
+}
 
-  if (!tokenCandidates.length) return "";
+function scoreCardMatch(card, ocrText) {
+  const text = String(ocrText || "").toLowerCase();
+  const name = String(card?.name || "").toLowerCase();
+  const set = String(card?.set?.name || "").toLowerCase();
+  const number = String(card?.number || "").toLowerCase();
 
-  // Best-effort heuristic: first title-like token likely corresponds to card name.
-  return tokenCandidates[0];
+  let score = 0;
+  if (name && text.includes(name)) score += 90;
+  if (number && text.includes(number)) score += 20;
+  if (set && text.includes(set)) score += 14;
+
+  const nameParts = name.split(/\s+/).filter((w) => w.length >= 3);
+  nameParts.forEach((part) => {
+    if (text.includes(part)) score += 15;
+    else if (fuzzyContains(text, part, 1)) score += 6;
+  });
+
+  if (name.startsWith("pikachu") && fuzzyContains(text, "pikachu", 2)) score += 24;
+  return score;
+}
+
+function fuzzyContains(haystack, needle, maxDistance) {
+  if (!haystack || !needle) return false;
+  if (haystack.includes(needle)) return true;
+  const words = haystack.split(/\s+/).filter(Boolean);
+  return words.some((word) => levenshtein(word, needle) <= maxDistance);
+}
+
+function levenshtein(a, b) {
+  const s = String(a || "");
+  const t = String(b || "");
+  const m = s.length;
+  const n = t.length;
+  if (!m) return n;
+  if (!n) return m;
+
+  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i += 1) dp[i][0] = i;
+  for (let j = 0; j <= n; j += 1) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost,
+      );
+    }
+  }
+
+  return dp[m][n];
+}
+
+function makeTopStripDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const cropH = Math.max(80, Math.round(img.height * 0.27));
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width * 2;
+      canvas.height = cropH * 2;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, 0, 0, img.width, cropH, 0, 0, canvas.width, canvas.height);
+
+      const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = id.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        const boosted = Math.max(0, Math.min(255, (gray - 112) * 1.6 + 128));
+        d[i] = boosted;
+        d[i + 1] = boosted;
+        d[i + 2] = boosted;
+      }
+      ctx.putImageData(id, 0, 0);
+      resolve(canvas.toDataURL("image/png", 0.92));
+    };
+    img.onerror = () => reject(new Error("Could not process OCR strip"));
+    img.src = dataUrl;
+  });
 }
