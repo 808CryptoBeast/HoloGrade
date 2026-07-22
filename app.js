@@ -169,6 +169,7 @@ const els = {
   portfolioStats: byId("portfolioStats"),
   portfolioHighlights: byId("portfolioHighlights"),
   portfolioBinderBreakdown: byId("portfolioBinderBreakdown"),
+  recalcPricesBtn: byId("recalcPricesBtn"),
   exportDataBtn: byId("exportDataBtn"),
   importDataInput: byId("importDataInput"),
 
@@ -226,6 +227,8 @@ const runtime = {
   decorationDrag: null,
   panelDrag: null,
   activeDetailCardId: null,
+  slotMove: null,
+  repricing: false,
   editor: {
     open: false,
     binderId: null,
@@ -278,27 +281,31 @@ function wireTabs() {
       setTab(btn.dataset.tab);
     });
   });
-  setTab(state.activeTab || "scan");
+  const preferredTab = state.activeTab === "portfolio" ? "collection" : (state.activeTab || "scan");
+  setTab(preferredTab);
 }
 
 function setTab(tabName) {
-  state.activeTab = tabName;
+  const safeTab = tabName === "portfolio" ? "collection" : tabName;
+  const panelExists = Array.from(els.panels).some((panel) => panel.id === `tab-${safeTab}`);
+  const nextTab = panelExists ? safeTab : "collection";
+  state.activeTab = nextTab;
   els.tabs.forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.tab === tabName);
+    btn.classList.toggle("active", btn.dataset.tab === nextTab);
   });
   els.panels.forEach((panel) => {
-    panel.classList.toggle("active", panel.id === `tab-${tabName}`);
+    panel.classList.toggle("active", panel.id === `tab-${nextTab}`);
   });
-  if (tabName !== "scan") {
+  if (nextTab !== "scan") {
     stopCamera();
   }
-  if (tabName !== "collection") {
+  if (nextTab !== "collection") {
     closeBinderBook();
   }
-  if (tabName === "portfolio") {
+  if (nextTab === "collection") {
     renderPortfolio();
   }
-  if (tabName === "dashboard") {
+  if (nextTab === "dashboard") {
     renderDashboard();
   }
   persist();
@@ -345,6 +352,9 @@ function wireDashboard() {
 }
 
 function wirePortfolio() {
+  if (!els.saveProfileBtn || !els.profileName || !els.profileFavorite || !els.profileBio || !els.exportDataBtn || !els.importDataInput || !els.recalcPricesBtn) {
+    return;
+  }
   els.saveProfileBtn.addEventListener("click", () => {
     state.profile.name = cleanText(els.profileName.value) || "Collector";
     state.profile.favorite = cleanText(els.profileFavorite.value);
@@ -353,6 +363,7 @@ function wirePortfolio() {
     renderPortfolio();
     status("Profile saved.");
   });
+  els.recalcPricesBtn.addEventListener("click", recalculateAllCardValues);
   els.exportDataBtn.addEventListener("click", exportBackup);
   els.importDataInput.addEventListener("change", importBackup);
 }
@@ -938,6 +949,7 @@ function renderCollection() {
     const pageCardSizing = getPageCardSizing(binder, pageTheme);
     const pageCardPreset = getCardSizePresetKey(pageCardSizing.scale, pageCardSizing.gap);
     const compactList = !!binder.compactList;
+    const clickMoveEnabled = !!binder.clickMoveEnabled;
     const sleeve = pageTheme.sleeveColor || binder.sleeveColor || "#9cdfff";
     const pageTint = pageTheme.pageTint || binder.pageTint || "#0f1d2f";
     const coverBg = binder.coverImage
@@ -981,6 +993,7 @@ function renderCollection() {
           <button class="btn primary small" data-action="add-page" type="button">Add Page</button>
           <button class="btn ghost small" data-action="remove-page" type="button">Remove Page</button>
           <button class="btn ghost small" data-action="toggle-compact-list" type="button">${compactList ? "Compact: On" : "Compact: Off"}</button>
+          <button class="btn ghost small" data-action="toggle-click-move" type="button">${clickMoveEnabled ? "Click Move: On" : "Click Move: Off"}</button>
           <button class="btn ghost small" data-action="toggle-lock-card-frame" type="button">${binder.lockCardArtFrame ? "Card Art Locked" : "Card Art Unlocked"}</button>
           <div class="card-preset-actions" aria-label="Card size presets">
             ${Object.entries(CARD_SIZE_PRESETS).map(([key, preset]) => `<button class="btn ghost small ${pageCardPreset === key ? "active" : ""}" data-action="card-preset" data-preset="${key}" type="button">${escapeHtml(preset.label)}</button>`).join("")}
@@ -1006,6 +1019,7 @@ function renderCollection() {
     const addBtn = block.querySelector('button[data-action="add-page"]');
     const removeBtn = block.querySelector('button[data-action="remove-page"]');
     const compactToggleBtn = block.querySelector('button[data-action="toggle-compact-list"]');
+    const clickMoveToggleBtn = block.querySelector('button[data-action="toggle-click-move"]');
     const lockCardFrameBtn = block.querySelector('button[data-action="toggle-lock-card-frame"]');
     const cardPresetButtons = block.querySelectorAll('button[data-action="card-preset"]');
     const editBtn = block.querySelector('button[data-action="edit-page"]');
@@ -1070,6 +1084,14 @@ function renderCollection() {
       renderBinderManager();
     });
 
+    clickMoveToggleBtn.addEventListener("click", () => {
+      binder.clickMoveEnabled = !binder.clickMoveEnabled;
+      runtime.slotMove = null;
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
     lockCardFrameBtn.addEventListener("click", () => {
       binder.lockCardArtFrame = !binder.lockCardArtFrame;
       persist();
@@ -1114,6 +1136,10 @@ function renderCollection() {
         slot.appendChild(img);
         slot.classList.add("has-card");
         slot.addEventListener("click", () => {
+          if (sortBy === "binder" && clickMoveEnabled) {
+            handleClickMoveSelection(binder, currentPage, slotNumber, slotCard);
+            return;
+          }
           openCardDetailModal(slotCard, {
             binderName: binder.coverTitle || binder.name,
             page: currentPage,
@@ -1123,6 +1149,17 @@ function renderCollection() {
       } else {
         slot.classList.add("empty");
         slot.textContent = "Empty";
+        if (sortBy === "binder" && clickMoveEnabled) {
+          slot.addEventListener("click", () => {
+            handleClickMoveSelection(binder, currentPage, slotNumber, null);
+          });
+        }
+      }
+      if (runtime.slotMove
+        && runtime.slotMove.binderId === binder.id
+        && runtime.slotMove.page === currentPage
+        && runtime.slotMove.cardId === slotCard?.id) {
+        slot.classList.add("move-source");
       }
       const slotBadge = document.createElement("span");
       slotBadge.className = "slot-number";
@@ -1340,6 +1377,119 @@ function applyCardSizePresetToPage(binder, page, presetKey) {
   const theme = upsertPageTheme(binder, page);
   theme.cardScale = preset.scale;
   theme.cardGap = preset.gap;
+}
+
+function resizePanelWithAutoAnchor(theme, panelId, nextColSpan, nextRowSpan) {
+  const colSpan = clamp(Number(nextColSpan) || 1, 1, 3);
+  const rowSpan = clamp(Number(nextRowSpan) || 1, 1, 3);
+  return theme.scenePanels.map((panel) => {
+    if (panel.id !== panelId) return panel;
+    const shape = { ...panel, colSpan, rowSpan };
+    const anchor = findNearestValidPanelAnchor(theme, panel.id, panel.anchor, shape);
+    const candidate = { ...shape, anchor };
+    return isPanelPlacementValid(theme.scenePanels, candidate, panel.id) ? candidate : panel;
+  });
+}
+
+function handleClickMoveSelection(binder, page, targetSlot, targetCard) {
+  if (!binder) return;
+  const active = runtime.slotMove;
+
+  if (!active || active.binderId !== binder.id || active.page !== page) {
+    if (!targetCard) {
+      status("Select a card first, then click a destination slot.");
+      return;
+    }
+    runtime.slotMove = { binderId: binder.id, page, cardId: targetCard.id };
+    renderCollection();
+    status(`Selected ${targetCard.name}. Click another slot to move it.`);
+    return;
+  }
+
+  if (active.cardId === targetCard?.id) {
+    runtime.slotMove = null;
+    renderCollection();
+    status("Move selection cleared.");
+    return;
+  }
+
+  const moved = moveCardWithSlotShift(active.cardId, binder.id, page, targetSlot);
+  runtime.slotMove = null;
+  if (!moved) {
+    renderCollection();
+    return;
+  }
+
+  persist();
+  renderCollection();
+  renderBinderManager();
+}
+
+function moveCardWithSlotShift(cardId, binderId, page, targetSlot) {
+  const binder = state.binders.find((item) => item.id === binderId);
+  if (!binder) return false;
+
+  const safePage = clamp(Number(page) || 1, 1, Math.max(1, Number(binder.pages || 1)));
+  const theme = getPageTheme(binder, safePage);
+  const availableSlots = getAvailableSlotsForTheme(theme);
+  const target = clamp(Number(targetSlot) || 1, 1, 9);
+  if (!availableSlots.includes(target)) {
+    status("That slot is reserved by the current page art layout.");
+    return false;
+  }
+
+  const card = state.cards.find((item) => item.id === cardId);
+  if (!card) return false;
+  if (card.binderId !== binderId || Number(card.page || 1) !== safePage) {
+    placeCardInSlot(cardId, binderId, safePage, target);
+    return true;
+  }
+
+  const slotCards = availableSlots.map((slot) => {
+    const found = state.cards.find(
+      (item) => item.binderId === binderId
+        && Number(item.page || 1) === safePage
+        && Number(item.slotOrder || 0) === slot,
+    );
+    return found?.id || null;
+  });
+
+  const sourceIndex = slotCards.findIndex((id) => id === cardId);
+  const targetIndex = availableSlots.indexOf(target);
+  if (sourceIndex === -1 || targetIndex === -1) return false;
+  if (sourceIndex === targetIndex) return true;
+
+  const movingId = slotCards[sourceIndex];
+  if (!movingId) return false;
+  slotCards[sourceIndex] = null;
+
+  if (targetIndex > sourceIndex) {
+    for (let i = sourceIndex; i < targetIndex; i += 1) {
+      slotCards[i] = slotCards[i + 1];
+    }
+  } else {
+    for (let i = sourceIndex; i > targetIndex; i -= 1) {
+      slotCards[i] = slotCards[i - 1];
+    }
+  }
+  slotCards[targetIndex] = movingId;
+
+  const nextSlots = new Map();
+  slotCards.forEach((id, index) => {
+    if (!id) return;
+    nextSlots.set(id, availableSlots[index]);
+  });
+
+  state.cards = state.cards.map((item) => {
+    if (!nextSlots.has(item.id)) return item;
+    return {
+      ...item,
+      slotOrder: nextSlots.get(item.id),
+    };
+  });
+
+  status(`Moved ${card.name} to slot ${target} and aligned surrounding cards.`);
+  return true;
 }
 
 function getPageCards(binderId, page) {
@@ -2499,6 +2649,107 @@ function wireBinders() {
   });
 }
 
+async function recalculateAllCardValues() {
+  if (runtime.repricing) return;
+  if (!state.cards.length) {
+    status("No cards to recalculate.");
+    return;
+  }
+
+  runtime.repricing = true;
+  els.recalcPricesBtn.disabled = true;
+  const originalLabel = els.recalcPricesBtn.textContent;
+  els.recalcPricesBtn.textContent = "Repricing...";
+
+  let updated = 0;
+  let failed = 0;
+
+  try {
+    for (let i = 0; i < state.cards.length; i += 1) {
+      const card = state.cards[i];
+      status(`Repricing ${i + 1}/${state.cards.length}: ${card.name}`);
+      const freshValues = await fetchCardValuesForExistingCard(card);
+      if (!freshValues) {
+        failed += 1;
+        continue;
+      }
+
+      const stabilized = stabilizeRepricedValues(card, freshValues);
+      state.cards = state.cards.map((item) => item.id === card.id
+        ? {
+          ...item,
+          rawValue: stabilized.raw,
+          psa9Value: stabilized.psa9,
+          psa10Value: stabilized.psa10,
+        }
+        : item);
+      updated += 1;
+    }
+
+    persist();
+    renderCollection();
+    renderPortfolio();
+    status(`Repricing complete. Updated ${updated} cards${failed ? `, ${failed} skipped` : ""}.`);
+  } finally {
+    runtime.repricing = false;
+    els.recalcPricesBtn.disabled = false;
+    els.recalcPricesBtn.textContent = originalLabel;
+  }
+}
+
+async function fetchCardValuesForExistingCard(card) {
+  try {
+    const exactId = cleanText(card?.tcg?.id);
+    if (exactId) {
+      const exactResp = await fetch(`https://api.pokemontcg.io/v2/cards/${encodeURIComponent(exactId)}`);
+      if (exactResp.ok) {
+        const exactJson = await exactResp.json();
+        if (exactJson?.data) {
+          return extractCardValues(exactJson.data);
+        }
+      }
+    }
+
+    const queryParts = [];
+    if (cleanText(card.name)) queryParts.push(`name:"${cleanText(card.name)}"`);
+    if (cleanText(card.number)) queryParts.push(`number:${cleanText(card.number).replace("#", "")}`);
+    if (cleanText(card.set)) queryParts.push(`set.name:"${cleanText(card.set)}"`);
+    const q = queryParts.join(" ") || `name:"${cleanText(card.name)}"`;
+    if (!q) return null;
+
+    const params = new URLSearchParams({ q, pageSize: "25" });
+    const resp = await fetch(`https://api.pokemontcg.io/v2/cards?${params.toString()}`);
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    const rows = Array.isArray(json?.data) ? json.data : [];
+    if (!rows.length) return null;
+
+    const ocrLike = `${card.name || ""} ${card.set || ""} ${card.number || ""}`.toLowerCase();
+    const best = rows
+      .map((row) => ({ row, score: scoreCardMatch(row, ocrLike) }))
+      .sort((a, b) => b.score - a.score)[0]?.row;
+    if (!best) return null;
+    return extractCardValues(best);
+  } catch {
+    return null;
+  }
+}
+
+function stabilizeRepricedValues(existingCard, nextValues) {
+  const raw = Number(nextValues?.raw || 0);
+  const psa9 = Number(nextValues?.psa9 || 0);
+  const psa10 = Number(nextValues?.psa10 || 0);
+  const oldRaw = Number(existingCard?.rawValue || 0);
+
+  // If raw comes back unrealistically low for a premium/high-grade card, keep the better prior baseline.
+  const premiumSignal = /charizard|mew|mewtwo|lugia|umbreon|rayquaza|pikachu/i.test(cleanText(existingCard?.name));
+  const highGrade = Number(existingCard?.grade || 0) >= 9;
+  const suspiciousLowRaw = raw > 0 && oldRaw > 0 && raw < oldRaw * 0.35;
+  const protectedRaw = (premiumSignal || highGrade) && suspiciousLowRaw ? oldRaw : raw;
+
+  return estimateFallbackValues(Math.max(protectedRaw, 0, raw, oldRaw * 0.15));
+}
+
 function renderBinderManager() {
   els.binderManager.innerHTML = "";
 
@@ -3241,9 +3492,7 @@ function renderBinderManager() {
         const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
         const theme = upsertPageTheme(binder, page);
         const template = SCENE_PANEL_TEMPLATES[select.value] || SCENE_PANEL_TEMPLATES.square;
-        theme.scenePanels = theme.scenePanels.map((panel) => panel.id === select.dataset.panelId
-          ? { ...panel, colSpan: template.colSpan, rowSpan: template.rowSpan, anchor: findNearestValidPanelAnchor(theme, panel.id, panel.anchor, template) }
-          : panel);
+        theme.scenePanels = resizePanelWithAutoAnchor(theme, select.dataset.panelId, template.colSpan, template.rowSpan);
         rebalancePageForLayout(binder.id, page);
         persist();
         renderCollection();
@@ -3265,15 +3514,9 @@ function renderBinderManager() {
         const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
         const theme = upsertPageTheme(binder, page);
         const nextWidth = clamp(Number(select.value) || 1, 1, 3);
-        theme.scenePanels = theme.scenePanels.map((panel) => {
-          if (panel.id !== select.dataset.panelId) return panel;
-          const candidate = {
-            ...panel,
-            colSpan: nextWidth,
-            anchor: findNearestValidPanelAnchor(theme, panel.id, panel.anchor, { ...panel, colSpan: nextWidth }),
-          };
-          return isPanelPlacementValid(theme.scenePanels, candidate, panel.id) ? candidate : panel;
-        });
+        const current = theme.scenePanels.find((panel) => panel.id === select.dataset.panelId);
+        if (!current) return;
+        theme.scenePanels = resizePanelWithAutoAnchor(theme, select.dataset.panelId, nextWidth, Number(current.rowSpan || 1));
         rebalancePageForLayout(binder.id, page);
         persist();
         renderCollection();
@@ -3286,15 +3529,9 @@ function renderBinderManager() {
         const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
         const theme = upsertPageTheme(binder, page);
         const nextHeight = clamp(Number(select.value) || 1, 1, 3);
-        theme.scenePanels = theme.scenePanels.map((panel) => {
-          if (panel.id !== select.dataset.panelId) return panel;
-          const candidate = {
-            ...panel,
-            rowSpan: nextHeight,
-            anchor: findNearestValidPanelAnchor(theme, panel.id, panel.anchor, { ...panel, rowSpan: nextHeight }),
-          };
-          return isPanelPlacementValid(theme.scenePanels, candidate, panel.id) ? candidate : panel;
-        });
+        const current = theme.scenePanels.find((panel) => panel.id === select.dataset.panelId);
+        if (!current) return;
+        theme.scenePanels = resizePanelWithAutoAnchor(theme, select.dataset.panelId, Number(current.colSpan || 1), nextHeight);
         rebalancePageForLayout(binder.id, page);
         persist();
         renderCollection();
@@ -3613,6 +3850,7 @@ function normalizePagingState() {
       cardScale: clamp(Number(binder.cardScale) || 86, 65, 120),
       cardGap: clamp(Number(binder.cardGap) || 8, 4, 18),
       compactList: !!binder.compactList,
+      clickMoveEnabled: !!binder.clickMoveEnabled,
       lockCardArtFrame: !!binder.lockCardArtFrame,
       cardImageFit: ["cover", "contain", "stretch"].includes(cleanText(binder.cardImageFit)) ? cleanText(binder.cardImageFit) : "cover",
       cardImageZoom: clamp(Number(binder.cardImageZoom) || 100, 80, 180),
@@ -3689,6 +3927,7 @@ function defaultBinder(name = "Main Binder") {
     cardScale: 86,
     cardGap: 8,
     compactList: false,
+    clickMoveEnabled: true,
     lockCardArtFrame: false,
     cardImageFit: "cover",
     cardImageZoom: 100,
@@ -3942,11 +4181,28 @@ function money(value) {
 
 function extractCardValues(card) {
   const prices = card?.tcgplayer?.prices || {};
-  const cardmarket = Number(card?.cardmarket?.prices?.averageSellPrice || 0);
-  const tcgPrice = Object.values(prices)
-    .map((entry) => Number(entry?.market || entry?.mid || entry?.low || 0))
-    .find((value) => value > 0) || 0;
-  const raw = roundMoney(cardmarket || tcgPrice || 0);
+  const cardmarketPrices = card?.cardmarket?.prices || {};
+
+  const tcgValues = Object.values(prices)
+    .flatMap((entry) => [
+      Number(entry?.market || 0),
+      Number(entry?.mid || 0),
+      Number(entry?.low || 0),
+      Number(entry?.high || 0),
+    ])
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  const cardmarketValues = [
+    Number(cardmarketPrices?.averageSellPrice || 0),
+    Number(cardmarketPrices?.trendPrice || 0),
+    Number(cardmarketPrices?.avg1 || 0),
+    Number(cardmarketPrices?.avg7 || 0),
+    Number(cardmarketPrices?.avg30 || 0),
+  ].filter((value) => Number.isFinite(value) && value > 0);
+
+  const tcgBest = tcgValues.length ? Math.max(...tcgValues) : 0;
+  const cardmarketBest = cardmarketValues.length ? Math.max(...cardmarketValues) : 0;
+  const raw = roundMoney(Math.max(tcgBest, cardmarketBest, 0));
   return estimateFallbackValues(raw);
 }
 

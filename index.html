@@ -22,7 +22,6 @@
     <nav class="tabs" aria-label="Main navigation">
       <button class="tab active" data-tab="dashboard" type="button">Dashboard</button>
       <button class="tab" data-tab="scan" type="button">Scan</button>
-      <button class="tab" data-tab="portfolio" type="button">Portfolio</button>
       <button class="tab" data-tab="collection" type="button">Collection</button>
       <button class="tab" data-tab="customize" type="button">Customize</button>
     </nav>
@@ -140,18 +139,24 @@
         </div>
       </section>
 
-      <section id="tab-portfolio" class="tab-panel" aria-labelledby="portfolio-tab">
+      <section id="tab-collection" class="tab-panel" aria-labelledby="collection-tab">
         <div class="panel">
           <div class="row-between">
-            <h2>My Portfolio</h2>
+            <h2>Collection</h2>
+            <span id="collectionCount" class="badge">0 cards</span>
+          </div>
+
+          <div class="row-between">
+            <h3>Portfolio Snapshot</h3>
             <div class="toolbar-actions">
+              <button id="recalcPricesBtn" class="btn ghost small" type="button">Recalculate Prices</button>
               <button id="exportDataBtn" class="btn ghost small" type="button">Export Backup</button>
               <label class="btn ghost small" for="importDataInput">Import Backup</label>
               <input id="importDataInput" type="file" accept="application/json" hidden />
               <button id="saveProfileBtn" class="btn primary small" type="button">Save Profile</button>
             </div>
           </div>
-          <p class="muted">Track your collection performance and personalize your collector profile.</p>
+          <p class="muted">Track value, personal profile, and binder performance in one place.</p>
 
           <div class="profile-grid">
             <label>
@@ -171,15 +176,6 @@
           <div id="portfolioStats" class="summary"></div>
           <div id="portfolioHighlights" class="portfolio-highlights"></div>
           <div id="portfolioBinderBreakdown" class="binder-breakdown"></div>
-        </div>
-      </section>
-
-      <section id="tab-collection" class="tab-panel" aria-labelledby="collection-tab">
-        <div class="panel">
-          <div class="row-between">
-            <h2>Collection</h2>
-            <span id="collectionCount" class="badge">0 cards</span>
-          </div>
 
           <div class="filters">
             <input id="searchInput" type="text" placeholder="Search name, set, number..." />
