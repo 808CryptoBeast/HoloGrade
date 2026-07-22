@@ -17,6 +17,60 @@ const PAGE_METHOD_PRESETS = {
   energy: { label: "Energy Burst", patternStyle: "lava", pageTint: "#21131a", sleeveColor: "#ffb36a", patternStrength: 80 },
 };
 
+const STICKER_PRESETS = {
+  star: { label: "Star", fill: "#ffe27a", stroke: "#fff6c1", path: "M50 8 L61 36 L91 36 L67 54 L76 84 L50 67 L24 84 L33 54 L9 36 L39 36 Z" },
+  spark: { label: "Spark", fill: "#8de9ff", stroke: "#d8fbff", path: "M50 4 L58 34 L88 42 L58 50 L50 96 L42 50 L12 42 L42 34 Z" },
+  heart: { label: "Heart", fill: "#ff9db0", stroke: "#ffd7df", path: "M50 86 C18 62 10 44 10 28 C10 16 19 8 31 8 C40 8 47 13 50 20 C53 13 60 8 69 8 C81 8 90 16 90 28 C90 44 82 62 50 86 Z" },
+  bolt: { label: "Bolt", fill: "#ffd36d", stroke: "#fff1bf", path: "M58 6 L28 50 H46 L36 94 L72 42 H53 Z" },
+  bloom: { label: "Bloom", fill: "#c9a8ff", stroke: "#f1e7ff", path: "M50 18 C59 2 76 6 76 22 C92 14 101 28 90 40 C106 44 106 62 90 66 C101 78 92 92 76 84 C76 100 59 104 50 88 C41 104 24 100 24 84 C8 92 -1 78 10 66 C-6 62 -6 44 10 40 C-1 28 8 14 24 22 C24 6 41 2 50 18 Z" },
+  ribbon: { label: "Ribbon", fill: "#7dffd4", stroke: "#e0fff5", path: "M18 30 C30 14 70 14 82 30 C88 38 88 50 82 58 C74 68 63 71 55 78 L62 94 L50 88 L38 94 L45 78 C37 71 26 68 18 58 C12 50 12 38 18 30 Z" },
+};
+
+const CURATED_NEWS_ITEMS = [
+  {
+    title: "Pokemon TCG Hub",
+    link: "https://www.pokemon.com/us/pokemon-tcg",
+    source: "Pokemon",
+    summary: "Official Pokemon TCG landing page for product updates, expansions, and play resources.",
+    image: "https://images.pokemontcg.io/sv1/symbol.png",
+  },
+  {
+    title: "Pokemon News",
+    link: "https://www.pokemon.com/us/pokemon-news",
+    source: "Pokemon News",
+    summary: "Official Pokemon news stream covering TCG announcements, events, and product releases.",
+    image: "https://images.pokemontcg.io/sv3pt5/logo.png",
+  },
+  {
+    title: "Play Pokemon Events",
+    link: "https://www.pokemon.com/us/play-pokemon",
+    source: "Play Pokemon",
+    summary: "Tournament, league, and organized-play information relevant to active TCG collectors and players.",
+    image: "https://images.pokemontcg.io/swsh12pt5/logo.png",
+  },
+  {
+    title: "Pokemon TCG Live",
+    link: "https://tcg.pokemon.com/en-us/tcgl/",
+    source: "Pokemon TCG Live",
+    summary: "Digital companion platform news and release updates for the current TCG environment.",
+    image: "https://images.pokemontcg.io/sv8/symbol.png",
+  },
+  {
+    title: "Expansions Database",
+    link: "https://www.pokemon.com/us/pokemon-tcg/trading-card-expansions/",
+    source: "Pokemon TCG",
+    summary: "Official set database to browse expansion releases and card list context while managing your binders.",
+    image: "https://images.pokemontcg.io/base1/logo.png",
+  },
+  {
+    title: "Pokemon Center TCG",
+    link: "https://www.pokemoncenter.com/category/trading-card-game",
+    source: "Pokemon Center",
+    summary: "Product storefront for sealed releases, accessories, and recent TCG merchandise drops.",
+    image: "https://images.pokemontcg.io/sv5/logo.png",
+  },
+];
+
 const NEWS_CACHE_AGE_MS = 1000 * 60 * 45;
 const NEWS_RSS_URL = "https://news.google.com/rss/search?q=Pokemon TCG&hl=en-US&gl=US&ceid=US:en";
 
@@ -140,6 +194,7 @@ const runtime = {
   dragCardId: null,
   openBinders: {},
   pageDoodles: {},
+  decorationDrag: null,
   editor: {
     open: false,
     binderId: null,
@@ -874,7 +929,7 @@ function renderCollection() {
           <button class="btn ghost small" data-action="remove-page" type="button">Remove Page</button>
         </div>
       </header>
-      <div class="binder-grid" data-binder-id="${binder.id}" data-page="${currentPage}" style="background-color:${pageTint}; background-image:url(${pageDoodle}), radial-gradient(circle at center, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px);"></div>
+      <div class="binder-grid" data-binder-id="${binder.id}" data-page="${currentPage}"></div>
       <div class="card-list"></div>
       </div>
     `;
@@ -948,6 +1003,9 @@ function renderCollection() {
     });
 
     const grid = block.querySelector(".binder-grid");
+    applyPageThemeToGrid(grid, pageTheme, pageDoodle);
+    renderPageDecorations(grid, binder, currentPage);
+
     const placedCards = allCardsOnPage.filter((card) => Number(card.slotOrder) >= 1 && Number(card.slotOrder) <= 9);
     for (let i = 0; i < 9; i += 1) {
       const slotNumber = i + 1;
@@ -1158,6 +1216,9 @@ function getPageTheme(binder, page) {
     pageTint: hexSafe(fromMap.pageTint, fallbackPreset.pageTint || binder.pageTint || "#0f1d2f"),
     sleeveColor: hexSafe(fromMap.sleeveColor, fallbackPreset.sleeveColor || binder.sleeveColor || "#9cdfff"),
     patternStrength: clamp(Number(fromMap.patternStrength || fallbackPreset.patternStrength || 45), 8, 100),
+    backgroundImage: cleanText(fromMap.backgroundImage),
+    designTitle: cleanText(fromMap.designTitle),
+    decorations: normalizeDecorations(fromMap.decorations),
   };
 }
 
@@ -1172,12 +1233,181 @@ function upsertPageTheme(binder, page) {
     pageTint: current.pageTint,
     sleeveColor: current.sleeveColor,
     patternStrength: current.patternStrength,
+    backgroundImage: current.backgroundImage,
+    designTitle: current.designTitle,
+    decorations: normalizeDecorations(current.decorations),
   };
   return binder.pageThemes[String(page)];
 }
 
 function getPageMethodLabel(method) {
   return PAGE_METHOD_PRESETS[method]?.label || "Custom";
+}
+
+function applyPageThemeToGrid(grid, pageTheme, pageDoodle) {
+  if (!grid) return;
+  grid.style.backgroundColor = pageTheme.pageTint || "#0f1d2f";
+  grid.style.backgroundImage = buildPageBackgroundImage(pageTheme, pageDoodle);
+  grid.style.backgroundSize = pageTheme.backgroundImage
+    ? "cover, cover, 220px 220px, 18px 18px"
+    : "cover, 220px 220px, 18px 18px";
+  grid.style.backgroundPosition = pageTheme.backgroundImage
+    ? "center, center, center, center"
+    : "center, center, center";
+  grid.style.backgroundRepeat = pageTheme.backgroundImage
+    ? "no-repeat, no-repeat, repeat, repeat"
+    : "no-repeat, repeat, repeat";
+  grid.style.setProperty("--page-rim", pageTheme.sleeveColor || "#9cdfff");
+  grid.style.setProperty("--page-glow", getMethodGlow(pageTheme.method, pageTheme.sleeveColor));
+}
+
+function buildPageBackgroundImage(pageTheme, pageDoodle) {
+  const layers = [getMethodOverlay(pageTheme.method)];
+  if (pageTheme.backgroundImage) {
+    layers.push(`url(${pageTheme.backgroundImage})`);
+  }
+  layers.push(`url(${pageDoodle})`);
+  layers.push("radial-gradient(circle at center, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px)");
+  return layers.join(", ");
+}
+
+function getMethodOverlay(method) {
+  const overlays = {
+    classic: "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(0,0,0,0.08))",
+    michi: "linear-gradient(135deg, rgba(255,255,255,0.08), rgba(110,255,212,0.12) 34%, rgba(243,165,255,0.18) 72%, rgba(9,15,28,0.2))",
+    minimal: "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.12))",
+    energy: "linear-gradient(125deg, rgba(255,185,92,0.22), rgba(255,103,136,0.12) 40%, rgba(20,8,14,0.24))",
+  };
+  return overlays[method] || overlays.classic;
+}
+
+function getMethodGlow(method, sleeveColor) {
+  const alpha = method === "michi" ? "44" : method === "energy" ? "36" : method === "minimal" ? "18" : "26";
+  return `${hexSafe(sleeveColor, "#9cdfff")}${alpha}`;
+}
+
+function buildPagePreviewBackground(pageTheme) {
+  const doodle = getPageDoodlePattern(pageTheme.patternStyle || "ocean", 1, pageTheme.patternStrength || 45);
+  const layers = [getMethodOverlay(pageTheme.method)];
+  if (pageTheme.backgroundImage) {
+    layers.push(`url(${pageTheme.backgroundImage})`);
+  }
+  layers.push(`url(${doodle})`);
+  return layers.join(", ");
+}
+
+function renderPageDecorations(grid, binder, page) {
+  if (!grid) return;
+  grid.querySelector(".page-decoration-layer")?.remove();
+  const theme = getPageTheme(binder, page);
+  if (!Array.isArray(theme.decorations) || !theme.decorations.length) return;
+
+  const layer = document.createElement("div");
+  layer.className = "page-decoration-layer";
+
+  theme.decorations.forEach((decoration) => {
+    const preset = STICKER_PRESETS[decoration.kind] || STICKER_PRESETS.star;
+    const sticker = document.createElement("button");
+    sticker.type = "button";
+    sticker.className = "page-decoration";
+    sticker.dataset.decorationId = decoration.id;
+    sticker.style.left = `${clamp(Number(decoration.x) || 50, 0, 100)}%`;
+    sticker.style.top = `${clamp(Number(decoration.y) || 50, 0, 100)}%`;
+    sticker.style.width = `${clamp(Number(decoration.size) || 18, 8, 42)}%`;
+    sticker.style.opacity = String(clamp(Number(decoration.opacity) || 0.95, 0.2, 1));
+    sticker.style.transform = `translate(-50%, -50%) rotate(${clamp(Number(decoration.rotation) || 0, -180, 180)}deg)`;
+    sticker.innerHTML = `
+      <img src="${createStickerDataUrl(preset, decoration.color)}" alt="${escapeAttr(preset.label)} sticker" draggable="false" />
+    `;
+
+    sticker.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      startDecorationDrag(event, sticker, binder.id, page, decoration.id);
+    });
+
+    layer.appendChild(sticker);
+  });
+
+  grid.appendChild(layer);
+}
+
+function normalizeDecorations(decorations) {
+  if (!Array.isArray(decorations)) return [];
+  return decorations
+    .map((item, index) => ({
+      id: cleanText(item?.id) || `decor-${index}-${Math.floor(Math.random() * 1e6)}`,
+      kind: cleanText(item?.kind) || "star",
+      x: clamp(Number(item?.x) || 50, 0, 100),
+      y: clamp(Number(item?.y) || 50, 0, 100),
+      size: clamp(Number(item?.size) || 18, 8, 42),
+      rotation: clamp(Number(item?.rotation) || 0, -180, 180),
+      opacity: clamp(Number(item?.opacity) || 0.95, 0.2, 1),
+      color: cleanText(item?.color) || "",
+    }))
+    .filter((item) => STICKER_PRESETS[item.kind]);
+}
+
+function createStickerDataUrl(preset, overrideFill = "") {
+  const fill = hexSafe(overrideFill, preset.fill);
+  const stroke = preset.stroke;
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+    <path d='${preset.path}' fill='${fill}' stroke='${stroke}' stroke-width='5' stroke-linejoin='round' stroke-linecap='round'/>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+function startDecorationDrag(event, sticker, binderId, page, decorationId) {
+  const layer = sticker.parentElement;
+  if (!layer) return;
+  const rect = layer.getBoundingClientRect();
+  const pointerId = event.pointerId;
+  runtime.decorationDrag = { binderId, page, decorationId, pointerId };
+  sticker.setPointerCapture(pointerId);
+
+  const onMove = (moveEvent) => {
+    if (!runtime.decorationDrag || runtime.decorationDrag.pointerId !== moveEvent.pointerId) return;
+    const x = clamp(((moveEvent.clientX - rect.left) / rect.width) * 100, 0, 100);
+    const y = clamp(((moveEvent.clientY - rect.top) / rect.height) * 100, 0, 100);
+    updateDecorationPosition(binderId, page, decorationId, x, y, false);
+    sticker.style.left = `${x}%`;
+    sticker.style.top = `${y}%`;
+  };
+
+  const onEnd = (endEvent) => {
+    if (!runtime.decorationDrag || runtime.decorationDrag.pointerId !== endEvent.pointerId) return;
+    const x = clamp(((endEvent.clientX - rect.left) / rect.width) * 100, 0, 100);
+    const y = clamp(((endEvent.clientY - rect.top) / rect.height) * 100, 0, 100);
+    updateDecorationPosition(binderId, page, decorationId, x, y, true);
+    runtime.decorationDrag = null;
+    sticker.releasePointerCapture(pointerId);
+    sticker.removeEventListener("pointermove", onMove);
+    sticker.removeEventListener("pointerup", onEnd);
+    sticker.removeEventListener("pointercancel", onEnd);
+  };
+
+  sticker.addEventListener("pointermove", onMove);
+  sticker.addEventListener("pointerup", onEnd);
+  sticker.addEventListener("pointercancel", onEnd);
+}
+
+function updateDecorationPosition(binderId, page, decorationId, x, y, shouldPersist) {
+  const binder = state.binders.find((item) => item.id === binderId);
+  if (!binder) return;
+  const theme = upsertPageTheme(binder, page);
+  theme.decorations = normalizeDecorations(theme.decorations).map((item) => {
+    if (item.id !== decorationId) return item;
+    return { ...item, x, y };
+  });
+  if (shouldPersist) {
+    persist();
+    renderCollection();
+  }
+}
+
+function getAverageDecorationSize(decorations) {
+  const list = normalizeDecorations(decorations);
+  if (!list.length) return 18;
+  return list.reduce((sum, item) => sum + Number(item.size || 18), 0) / list.length;
 }
 
 function getPageDoodlePattern(style, page, strength = 45) {
@@ -1625,77 +1855,12 @@ async function maybeRefreshNews() {
 
 async function fetchNews(force) {
   if (!els.newsStatus) return;
-  els.newsStatus.textContent = "Loading";
-  try {
-    const endpoint = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(NEWS_RSS_URL)}&count=6`;
-    const response = await fetch(endpoint, { cache: force ? "no-store" : "default" });
-    if (!response.ok) {
-      throw new Error(`rss2json responded ${response.status}`);
-    }
-    const data = await response.json();
-    const items = Array.isArray(data.items) ? data.items : [];
-
-    state.news = items.slice(0, 6).map((item) => ({
-      title: cleanText(item.title) || "Pokemon TCG Update",
-      link: item.link || NEWS_RSS_URL,
-      source: cleanText(item.author || data.feed?.title || "Google News"),
-      pubDate: formatNewsDate(item.pubDate),
-      summary: summarizeHtml(item.description || item.content || "Recent Pokemon TCG headline."),
-      image: extractNewsImage(item),
-    }));
-    state.newsFetchedAt = Date.now();
-    persist();
-    updateNewsStatus();
-    renderDashboard();
-  } catch {
-    try {
-      // Fallback when rss2json returns 422/rate errors.
-      const xmlText = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(NEWS_RSS_URL)}`, {
-        cache: force ? "no-store" : "default",
-      }).then((resp) => {
-        if (!resp.ok) throw new Error(`allorigins responded ${resp.status}`);
-        return resp.text();
-      });
-
-      const items = parseRssXmlItems(xmlText).slice(0, 6);
-      state.news = items.length ? items : [fallbackNewsItem()];
-      state.newsFetchedAt = Date.now();
-      persist();
-      updateNewsStatus();
-      renderDashboard();
-    } catch {
-      if (!state.news.length) {
-        state.news = [fallbackNewsItem()];
-        state.newsFetchedAt = Date.now();
-        persist();
-      }
-      els.newsStatus.textContent = "Offline";
-      renderDashboard();
-    }
-  }
-}
-
-function parseRssXmlItems(xmlText) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(String(xmlText || ""), "text/xml");
-  const nodes = Array.from(doc.querySelectorAll("item"));
-
-  return nodes.map((node) => {
-    const title = cleanText(node.querySelector("title")?.textContent) || "Pokemon TCG Update";
-    const link = cleanText(node.querySelector("link")?.textContent) || NEWS_RSS_URL;
-    const pubDateRaw = cleanText(node.querySelector("pubDate")?.textContent);
-    const description = cleanText(node.querySelector("description")?.textContent);
-    const source = cleanText(node.querySelector("source")?.textContent) || "Google News";
-
-    return {
-      title,
-      link,
-      source,
-      pubDate: formatNewsDate(pubDateRaw),
-      summary: description.length > 180 ? `${description.slice(0, 177)}...` : description,
-      image: "",
-    };
-  });
+  els.newsStatus.textContent = "Refreshing";
+  state.news = buildCuratedNewsItems();
+  state.newsFetchedAt = Date.now();
+  persist();
+  els.newsStatus.textContent = force ? "Curated" : "Ready";
+  renderDashboard();
 }
 
 function updateNewsStatus() {
@@ -1747,6 +1912,14 @@ function renderBinderManager() {
       const page = i + 1;
       return `<option value="${page}" ${page === customPage ? "selected" : ""}>Page ${page}</option>`;
     }).join("");
+    const stickerButtons = Object.entries(STICKER_PRESETS)
+      .map(([key, preset]) => `
+        <button class="sticker-preset" type="button" data-action="add-sticker" data-sticker="${key}">
+          <img src="${createStickerDataUrl(preset)}" alt="${escapeAttr(preset.label)}" />
+          <span>${escapeHtml(preset.label)}</span>
+        </button>
+      `)
+      .join("");
 
     wrap.innerHTML = `
       <h4>${escapeHtml(binder.name)}</h4>
@@ -1828,8 +2001,34 @@ function renderBinderManager() {
             Pattern strength (${Number(customTheme.patternStrength || 45)})
             <input type="range" min="8" max="100" step="1" value="${Number(customTheme.patternStrength || 45)}" data-action="theme-strength" />
           </label>
+          <label>
+            Page art image
+            <input type="file" accept="image/*" data-action="theme-image" />
+          </label>
+          <label>
+            Design title
+            <input type="text" value="${escapeAttr(customTheme.designTitle || "")}" data-action="theme-title" placeholder="e.g. Neon Sakura" />
+          </label>
         </div>
-        <button class="btn ghost small" data-action="theme-apply-all" type="button">Apply This Style To All Pages</button>
+        <div class="page-style-preview" style="background-image:${buildPagePreviewBackground(customTheme)}">
+          <span>${escapeHtml(customTheme.designTitle || `${getPageMethodLabel(customTheme.method)} Page ${customPage}`)}</span>
+        </div>
+        <div class="sticker-preset-grid">${stickerButtons}</div>
+        <div class="sub-grid compact-controls">
+          <label>
+            Sticker scale (${Math.round(getAverageDecorationSize(customTheme.decorations) || 18)}%)
+            <input type="range" min="8" max="42" step="1" value="${Math.round(getAverageDecorationSize(customTheme.decorations) || 18)}" data-action="theme-sticker-size" />
+          </label>
+          <label>
+            Accent color
+            <input type="color" value="${escapeAttr(hexSafe(customTheme.sleeveColor, "#9cdfff"))}" data-action="theme-sticker-color" />
+          </label>
+        </div>
+        <div class="page-style-actions">
+          <button class="btn ghost small" data-action="theme-clear-stickers" type="button">Clear Stickers</button>
+          <button class="btn ghost small" data-action="theme-clear-image" type="button">Clear Page Art</button>
+          <button class="btn ghost small" data-action="theme-apply-all" type="button">Apply This Style To All Pages</button>
+        </div>
       </div>
     `;
 
@@ -1849,7 +2048,14 @@ function renderBinderManager() {
     const themeTintInput = wrap.querySelector('input[data-action="theme-tint"]');
     const themeSleeveInput = wrap.querySelector('input[data-action="theme-sleeve"]');
     const themeStrengthInput = wrap.querySelector('input[data-action="theme-strength"]');
+    const themeImageInput = wrap.querySelector('input[data-action="theme-image"]');
+    const themeTitleInput = wrap.querySelector('input[data-action="theme-title"]');
+    const themeClearImageBtn = wrap.querySelector('button[data-action="theme-clear-image"]');
+    const themeStickerSizeInput = wrap.querySelector('input[data-action="theme-sticker-size"]');
+    const themeStickerColorInput = wrap.querySelector('input[data-action="theme-sticker-color"]');
+    const themeClearStickersBtn = wrap.querySelector('button[data-action="theme-clear-stickers"]');
     const themeApplyAllBtn = wrap.querySelector('button[data-action="theme-apply-all"]');
+    const stickerPresetButtons = wrap.querySelectorAll('button[data-action="add-sticker"]');
 
     renameInput.addEventListener("change", () => {
       const newName = cleanText(renameInput.value);
@@ -1993,6 +2199,87 @@ function renderBinderManager() {
       renderBinderManager();
     });
 
+    themeImageInput.addEventListener("change", async () => {
+      const file = themeImageInput.files?.[0];
+      if (!file) return;
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      theme.backgroundImage = await resizeImageFile(file, 1600, 0.84);
+      persist();
+      renderCollection();
+      renderBinderManager();
+      status(`Updated Michi page art for ${binder.name} page ${page}.`);
+    });
+
+    themeTitleInput.addEventListener("change", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      theme.designTitle = cleanText(themeTitleInput.value);
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    themeClearImageBtn.addEventListener("click", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      theme.backgroundImage = "";
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    stickerPresetButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+        const theme = upsertPageTheme(binder, page);
+        const kind = button.dataset.sticker;
+        const next = {
+          id: cryptoRandom(),
+          kind,
+          x: 14 + Math.random() * 72,
+          y: 14 + Math.random() * 72,
+          size: clamp(Number(themeStickerSizeInput.value) || 18, 8, 42),
+          rotation: Math.round((Math.random() * 36) - 18),
+          opacity: 0.94,
+          color: themeStickerColorInput.value,
+        };
+        theme.decorations = [...normalizeDecorations(theme.decorations), next];
+        persist();
+        renderCollection();
+        renderBinderManager();
+      });
+    });
+
+    themeStickerSizeInput.addEventListener("input", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      const size = clamp(Number(themeStickerSizeInput.value) || 18, 8, 42);
+      theme.decorations = normalizeDecorations(theme.decorations).map((item) => ({ ...item, size }));
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    themeStickerColorInput.addEventListener("change", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      const color = themeStickerColorInput.value;
+      theme.decorations = normalizeDecorations(theme.decorations).map((item) => ({ ...item, color }));
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
+    themeClearStickersBtn.addEventListener("click", () => {
+      const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
+      const theme = upsertPageTheme(binder, page);
+      theme.decorations = [];
+      persist();
+      renderCollection();
+      renderBinderManager();
+    });
+
     themeApplyAllBtn.addEventListener("click", () => {
       const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
       const source = getPageTheme(binder, page);
@@ -2004,6 +2291,9 @@ function renderBinderManager() {
           pageTint: source.pageTint,
           sleeveColor: source.sleeveColor,
           patternStrength: source.patternStrength,
+          backgroundImage: source.backgroundImage,
+          designTitle: source.designTitle,
+          decorations: normalizeDecorations(source.decorations),
         };
       }
       binder.pageThemes = map;
@@ -2121,6 +2411,20 @@ function persist() {
 function normalizePagingState() {
   state.binders = state.binders.map((binder) => {
     const [a, b] = BINDER_STYLES[binder.style] || BINDER_STYLES.ocean;
+    const pageThemes = binder.pageThemes && typeof binder.pageThemes === "object"
+      ? Object.fromEntries(
+        Object.entries(binder.pageThemes).map(([page, theme]) => [page, {
+          method: cleanText(theme?.method) || "classic",
+          patternStyle: cleanText(theme?.patternStyle) || binder.style || "ocean",
+          pageTint: hexSafe(theme?.pageTint, "#0f1d2f"),
+          sleeveColor: hexSafe(theme?.sleeveColor, "#9cdfff"),
+          patternStrength: clamp(Number(theme?.patternStrength || 45), 8, 100),
+          backgroundImage: cleanText(theme?.backgroundImage),
+          designTitle: cleanText(theme?.designTitle),
+          decorations: normalizeDecorations(theme?.decorations),
+        }]),
+      )
+      : {};
     return {
       ...defaultBinder(),
       ...binder,
@@ -2132,7 +2436,7 @@ function normalizePagingState() {
       pageTint: hexSafe(binder.pageTint, "#0f1d2f"),
       coverImage: binder.coverImage || "",
       pageMethodDefault: cleanText(binder.pageMethodDefault) || "classic",
-      pageThemes: binder.pageThemes && typeof binder.pageThemes === "object" ? binder.pageThemes : {},
+      pageThemes,
     };
   });
 
@@ -2565,6 +2869,17 @@ function fallbackNewsItem() {
     summary: "The live news feed could not load right now. Use Refresh News to try again.",
     image: "",
   };
+}
+
+function buildCuratedNewsItems() {
+  return CURATED_NEWS_ITEMS.map((item, index) => ({
+    title: item.title,
+    link: item.link,
+    source: item.source,
+    pubDate: formatNewsDate(new Date(Date.now() - index * 86400000).toISOString()),
+    summary: item.summary,
+    image: item.image,
+  }));
 }
 
 function openCardDetailModal(card, context = {}) {

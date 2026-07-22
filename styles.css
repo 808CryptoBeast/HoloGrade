@@ -758,8 +758,13 @@ select {
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   padding: 10px;
+  position: relative;
   background-image: radial-gradient(circle at center, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px);
   background-size: 18px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px var(--page-rim, rgba(255, 255, 255, 0.14)), inset 0 0 40px var(--page-glow, transparent);
+  transition: box-shadow 0.25s ease, background-image 0.25s ease, background-color 0.25s ease;
 }
 
 .binder-grid.drag-over-grid {
@@ -779,6 +784,7 @@ select {
   overflow: hidden;
   background: rgba(0, 0, 0, 0.18);
   position: relative;
+  z-index: 2;
 }
 
 .slot.has-card {
@@ -1049,6 +1055,96 @@ select {
   margin-top: 0;
 }
 
+.page-style-preview {
+  min-height: 110px;
+  margin-top: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background-size: cover, cover, 220px 220px;
+  background-position: center;
+  display: flex;
+  align-items: end;
+  padding: 10px;
+  overflow: hidden;
+}
+
+.page-style-preview span {
+  display: inline-flex;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.44);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+
+.page-style-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.compact-controls {
+  margin-top: 10px;
+}
+
+.sticker-preset-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sticker-preset {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+}
+
+.sticker-preset img {
+  width: 42px;
+  height: 42px;
+}
+
+.sticker-preset span {
+  font-size: 12px;
+}
+
+.page-decoration-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.page-decoration {
+  position: absolute;
+  aspect-ratio: 1;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.page-decoration img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.3));
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.page-decoration:active {
+  cursor: grabbing;
+}
+
 .card-detail-modal {
   position: fixed;
   inset: 0;
@@ -1249,6 +1345,10 @@ select {
 
   .auto-info-grid {
     grid-template-columns: 1fr;
+  }
+
+  .sticker-preset-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .card-detail-hero {
