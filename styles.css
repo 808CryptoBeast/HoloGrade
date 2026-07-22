@@ -1117,6 +1117,36 @@ select {
   background: rgba(3, 12, 22, 0.3);
 }
 
+.michi-workbench {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.1fr);
+  gap: 12px;
+}
+
+.michi-workbench-preview {
+  position: sticky;
+  top: 8px;
+  align-self: start;
+}
+
+.michi-workbench-controls {
+  display: grid;
+  gap: 10px;
+}
+
+.michi-section {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.03);
+  padding: 8px;
+}
+
+.michi-section > summary {
+  cursor: pointer;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .michi-page-lab h5 {
   margin: 0 0 8px;
   font-size: 13px;
@@ -1289,6 +1319,10 @@ select {
   margin-top: 10px;
 }
 
+.page-style-actions .btn {
+  flex: 1 1 180px;
+}
+
 .compact-controls {
   margin-top: 10px;
 }
@@ -1377,6 +1411,8 @@ select {
   align-items: center;
   padding: 14px;
   border-bottom: 1px solid var(--line);
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .card-detail-body {
@@ -1558,6 +1594,14 @@ select {
 
   .panel-template-actions {
     grid-template-columns: 1fr;
+  }
+
+  .michi-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .michi-workbench-preview {
+    position: static;
   }
 
   .panel-span-grid {

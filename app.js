@@ -183,6 +183,7 @@ const els = {
   binderBookPageLabel: byId("binderBookPageLabel"),
 
   cardDetailModal: byId("cardDetailModal"),
+  cardDetailRemoveBtn: byId("cardDetailRemoveBtn"),
   cardDetailClose: byId("cardDetailClose"),
   cardDetailContext: byId("cardDetailContext"),
   cardDetailTitle: byId("cardDetailTitle"),
@@ -218,6 +219,7 @@ const runtime = {
   pageDoodles: {},
   decorationDrag: null,
   panelDrag: null,
+  activeDetailCardId: null,
   editor: {
     open: false,
     binderId: null,
@@ -310,6 +312,19 @@ function wireBinderBook() {
 function wireCardDetailModal() {
   if (!els.cardDetailModal) return;
   els.cardDetailClose.addEventListener("click", closeCardDetailModal);
+  els.cardDetailRemoveBtn?.addEventListener("click", () => {
+    if (!runtime.activeDetailCardId) return;
+    const card = state.cards.find((item) => item.id === runtime.activeDetailCardId);
+    if (!card) return;
+    const ok = window.confirm(`Remove ${card.name} from your binder?`);
+    if (!ok) return;
+    state.cards = state.cards.filter((item) => item.id !== card.id);
+    closeCardDetailModal();
+    persist();
+    renderCollection();
+    renderBinderManager();
+    status(`${card.name} removed.`);
+  });
   els.cardDetailModal.addEventListener("click", (event) => {
     if (event.target === els.cardDetailModal) {
       closeCardDetailModal();
@@ -2415,6 +2430,7 @@ function renderBinderManager() {
           Panel art
           <input type="file" accept="image/*" data-action="panel-image" data-panel-id="${panel.id}" />
         </label>
+        <button class="btn ghost small" type="button" data-action="panel-image-clear" data-panel-id="${panel.id}">Clear Panel Image</button>
         <label>
           Layer (${Number(panel.layer || 12)})
           <input type="range" min="1" max="40" step="1" value="${Number(panel.layer || 12)}" data-action="panel-layer" data-panel-id="${panel.id}" />
@@ -2551,29 +2567,47 @@ function renderBinderManager() {
             <input type="file" accept="image/*" data-action="theme-scene-image" />
           </label>
         </div>
-        <div class="page-style-preview" style="background-image:${buildPagePreviewBackground(customTheme)}">
-          <span>${escapeHtml(customTheme.designTitle || `${getPageMethodLabel(customTheme.method)} Page ${customPage}`)}</span>
-        </div>
-        <div class="michi-lab-note muted">Add panels, drag them on the preview grid, and resize them to claim more card spaces.</div>
-        <div class="panel-template-actions">${panelButtons}</div>
-        <div class="panel-layout-editor" data-binder-id="${binder.id}" data-page="${customPage}"></div>
-        <div class="panel-config-list">${panelCards || '<p class="muted">No scene panels yet. Add one and drag it on the preview grid.</p>'}</div>
-        <div class="michi-lab-note muted">Stickers sit above the page art and can be dragged in the live binder page.</div>
-        <div class="sticker-preset-grid">${stickerButtons}</div>
-        <div class="sub-grid compact-controls">
-          <label>
-            Sticker scale (${Math.round(getAverageDecorationSize(customTheme.decorations) || 18)}%)
-            <input type="range" min="8" max="42" step="1" value="${Math.round(getAverageDecorationSize(customTheme.decorations) || 18)}" data-action="theme-sticker-size" />
-          </label>
-          <label>
-            Accent color
-            <input type="color" value="${escapeAttr(hexSafe(customTheme.sleeveColor, "#9cdfff"))}" data-action="theme-sticker-color" />
-          </label>
-        </div>
-        <div class="page-style-actions">
-          <button class="btn ghost small" data-action="theme-clear-stickers" type="button">Clear Stickers</button>
-          <button class="btn ghost small" data-action="theme-clear-image" type="button">Clear Page Art</button>
-          <button class="btn ghost small" data-action="theme-apply-all" type="button">Apply This Style To All Pages</button>
+        <div class="michi-workbench">
+          <div class="michi-workbench-preview">
+            <div class="page-style-preview" style="background-image:${buildPagePreviewBackground(customTheme)}">
+              <span>${escapeHtml(customTheme.designTitle || `${getPageMethodLabel(customTheme.method)} Page ${customPage}`)}</span>
+            </div>
+            <div class="michi-lab-note muted">Live preview: drag and resize panels here. This stays visible while you edit.</div>
+            <div class="panel-template-actions">${panelButtons}</div>
+            <div class="panel-layout-editor" data-binder-id="${binder.id}" data-page="${customPage}"></div>
+          </div>
+
+          <div class="michi-workbench-controls">
+            <details class="michi-section" open>
+              <summary>Scene Panels</summary>
+              <div class="panel-config-list">${panelCards || '<p class="muted">No scene panels yet. Add one and drag it on the preview grid.</p>'}</div>
+            </details>
+
+            <details class="michi-section" open>
+              <summary>Stickers</summary>
+              <div class="michi-lab-note muted">Stickers sit above the page art and can be dragged in the live binder page.</div>
+              <div class="sticker-preset-grid">${stickerButtons}</div>
+              <div class="sub-grid compact-controls">
+                <label>
+                  Sticker scale (${Math.round(getAverageDecorationSize(customTheme.decorations) || 18)}%)
+                  <input type="range" min="8" max="42" step="1" value="${Math.round(getAverageDecorationSize(customTheme.decorations) || 18)}" data-action="theme-sticker-size" />
+                </label>
+                <label>
+                  Accent color
+                  <input type="color" value="${escapeAttr(hexSafe(customTheme.sleeveColor, "#9cdfff"))}" data-action="theme-sticker-color" />
+                </label>
+              </div>
+            </details>
+
+            <details class="michi-section" open>
+              <summary>Quick Actions</summary>
+              <div class="page-style-actions">
+                <button class="btn ghost small" data-action="theme-clear-stickers" type="button">Clear Stickers</button>
+                <button class="btn ghost small" data-action="theme-clear-image" type="button">Clear Page Art</button>
+                <button class="btn ghost small" data-action="theme-apply-all" type="button">Apply This Style To All Pages</button>
+              </div>
+            </details>
+          </div>
         </div>
       </div>
     `;
@@ -2613,6 +2647,7 @@ function renderBinderManager() {
     const panelWidthSelects = wrap.querySelectorAll('select[data-action="panel-width"]');
     const panelHeightSelects = wrap.querySelectorAll('select[data-action="panel-height"]');
     const panelImageInputs = wrap.querySelectorAll('input[data-action="panel-image"]');
+    const panelImageClearButtons = wrap.querySelectorAll('button[data-action="panel-image-clear"]');
     const panelLayerInputs = wrap.querySelectorAll('input[data-action="panel-layer"]');
     const panelZoomInputs = wrap.querySelectorAll('input[data-action="panel-zoom"]');
     const panelFocusXInputs = wrap.querySelectorAll('input[data-action="panel-focus-x"]');
@@ -2936,6 +2971,15 @@ function renderBinderManager() {
         persist();
         renderCollection();
         renderBinderManager();
+      });
+    });
+
+    panelImageClearButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        mutateScenePanel(binder, maxPages, themePageSelect, button.dataset.panelId, (panel) => ({
+          ...panel,
+          image: "",
+        }));
       });
     });
 
@@ -3708,6 +3752,7 @@ function buildCuratedNewsItems() {
 
 function openCardDetailModal(card, context = {}) {
   if (!card || !els.cardDetailModal) return;
+  runtime.activeDetailCardId = card.id;
   const binderName = cleanText(context.binderName) || getBinderLabel(card.binderId);
   const page = Number(context.page || card.page || 1);
   const slot = Number(context.slot || card.slotOrder || 0);
@@ -3757,6 +3802,7 @@ function openCardDetailModal(card, context = {}) {
 
 function closeCardDetailModal() {
   if (!els.cardDetailModal) return;
+  runtime.activeDetailCardId = null;
   els.cardDetailModal.classList.add("hidden");
   els.cardDetailModal.setAttribute("aria-hidden", "true");
 }
