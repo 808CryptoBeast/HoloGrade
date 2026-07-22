@@ -396,7 +396,7 @@ async function analyzeCurrentImage() {
   const analysis = buildAnalysisResult(quality, cardInfo, text);
   state.analysis = analysis;
   renderResult(analysis);
-  status("Analysis complete. Review and save to binder.");
+  status(`Analysis complete. Auto-filled ${analysis.autoFieldCount} fields. Review and save.`);
 }
 
 function estimateCondition(imageBitmap) {
@@ -467,15 +467,17 @@ async function identifyCard(ocrText) {
   const cleaned = sanitizeOcrText(ocrText);
   const probableName = guessPokemonName(cleaned);
   const tokens = extractSearchTokens(cleaned);
+  const ocrHints = extractOcrCardHints(cleaned);
 
   if (!probableName && !tokens.length) {
     return {
       found: false,
-      name: "Unknown Card",
-      set: "Unknown Set",
-      number: "",
-      rarity: "",
+      name: ocrHints.name || "Unknown Card",
+      set: ocrHints.set || "Unknown Set",
+      number: ocrHints.number || "",
+      rarity: ocrHints.rarity || "",
       confidence: "low",
+      autoRecord: ocrHints,
     };
   }
 
@@ -508,11 +510,12 @@ async function identifyCard(ocrText) {
     if (!candidates.length) {
       return {
         found: false,
-        name: titleCase(probableName || tokens[0] || "Unknown Card"),
-        set: "Unknown Set",
-        number: "",
-        rarity: "",
+        name: ocrHints.name || titleCase(probableName || tokens[0] || "Unknown Card"),
+        set: ocrHints.set || "Unknown Set",
+        number: ocrHints.number || "",
+        rarity: ocrHints.rarity || "",
         confidence: "medium",
+        autoRecord: ocrHints,
       };
     }
 
@@ -521,43 +524,52 @@ async function identifyCard(ocrText) {
       .sort((a, b) => b.score - a.score);
 
     const first = scored[0].card;
+    const autoRecord = {
+      ...ocrHints,
+      ...extractAutoCardData(first),
+    };
 
     return {
       found: true,
-      name: first.name || titleCase(probableName),
-      set: first.set?.name || "Unknown Set",
-      number: first.number || "",
-      rarity: first.rarity || "",
+      name: autoRecord.name || first.name || titleCase(probableName),
+      set: autoRecord.set || first.set?.name || "Unknown Set",
+      number: autoRecord.number || first.number || "",
+      rarity: autoRecord.rarity || first.rarity || "",
       values: extractCardValues(first),
       confidence: "high",
+      autoRecord,
     };
   } catch {
     return {
       found: false,
-      name: titleCase(probableName || tokens[0] || "Unknown Card"),
-      set: "Unknown Set",
-      number: "",
-      rarity: "",
+      name: ocrHints.name || titleCase(probableName || tokens[0] || "Unknown Card"),
+      set: ocrHints.set || "Unknown Set",
+      number: ocrHints.number || "",
+      rarity: ocrHints.rarity || "",
       confidence: "low",
+      autoRecord: ocrHints,
     };
   }
 }
 
 function buildAnalysisResult(quality, cardInfo, ocrText) {
+  const autoRecord = cardInfo.autoRecord || extractOcrCardHints(ocrText);
   const note = cardInfo.found
     ? "Card match found from OCR text and public TCG database."
     : "Card match is uncertain. Edit fields before saving.";
 
   return {
-    name: cardInfo.name || "Unknown Card",
-    set: cardInfo.set || "Unknown Set",
-    number: cardInfo.number || "",
-    rarity: cardInfo.rarity || "",
+    name: cardInfo.name || autoRecord.name || "Unknown Card",
+    set: cardInfo.set || autoRecord.set || "Unknown Set",
+    number: cardInfo.number || autoRecord.number || "",
+    rarity: cardInfo.rarity || autoRecord.rarity || "",
     values: cardInfo.values || estimateFallbackValues(0),
     confidence: cardInfo.confidence,
     note,
     ocrExcerpt: ocrText?.slice(0, 160) || "",
     condition: quality,
+    autoRecord,
+    autoFieldCount: countAutoCapturedFields(autoRecord),
   };
 }
 
@@ -621,6 +633,8 @@ function saveAnalyzedCard() {
 
   const page = findPageWithSpace(binderId);
   const slotOrder = getNextSlotOrder(binderId, page);
+  const auto = state.analysis.autoRecord || {};
+  const savedAt = Date.now();
 
   const card = {
     id: cryptoRandom(),
@@ -638,7 +652,33 @@ function saveAnalyzedCard() {
     slotOrder,
     purchasePrice: parseNullableNumber(els.editPurchase.value),
     image: runtime.imageDataUrl,
-    addedAt: Date.now(),
+    addedAt: savedAt,
+    hp: cleanText(auto.hp),
+    supertype: cleanText(auto.supertype),
+    subtypes: Array.isArray(auto.subtypes) ? auto.subtypes : [],
+    types: Array.isArray(auto.types) ? auto.types : [],
+    evolvesFrom: cleanText(auto.evolvesFrom),
+    evolvesTo: Array.isArray(auto.evolvesTo) ? auto.evolvesTo : [],
+    abilities: Array.isArray(auto.abilities) ? auto.abilities : [],
+    attacks: Array.isArray(auto.attacks) ? auto.attacks : [],
+    weaknesses: Array.isArray(auto.weaknesses) ? auto.weaknesses : [],
+    resistances: Array.isArray(auto.resistances) ? auto.resistances : [],
+    retreatCost: Array.isArray(auto.retreatCost) ? auto.retreatCost : [],
+    convertedRetreatCost: Number(auto.convertedRetreatCost) || 0,
+    artist: cleanText(auto.artist),
+    regulationMark: cleanText(auto.regulationMark),
+    flavorText: cleanText(auto.flavorText),
+    rules: Array.isArray(auto.rules) ? auto.rules : [],
+    legalities: auto.legalities && typeof auto.legalities === "object" ? auto.legalities : {},
+    nationalPokedexNumbers: Array.isArray(auto.nationalPokedexNumbers) ? auto.nationalPokedexNumbers : [],
+    tcg: auto.tcg && typeof auto.tcg === "object" ? auto.tcg : null,
+    apiImages: auto.images && typeof auto.images === "object" ? auto.images : null,
+    scan: {
+      confidence: cleanText(state.analysis.confidence) || "unknown",
+      ocrExcerpt: cleanText(state.analysis.ocrExcerpt),
+      autoFieldCount: Number(state.analysis.autoFieldCount) || 0,
+      savedAt,
+    },
   };
 
   state.cards.unshift(card);
@@ -1082,6 +1122,9 @@ function renderCardItem(card, context) {
   chip.textContent = `EST ${card.grade.toFixed(1)}`;
 
   addTag(tags, card.rarity || "Unknown rarity");
+  if (card.hp) addTag(tags, `${card.hp} HP`);
+  if (Array.isArray(card.types) && card.types.length) addTag(tags, card.types.join("/"));
+  if (card.artist) addTag(tags, `Art: ${card.artist}`);
   addTag(tags, binder?.name || "No binder");
   addTag(tags, `Page ${card.page || 1}`);
   if (card.purchasePrice != null) {
@@ -2060,6 +2103,125 @@ function extractCardValues(card) {
     .find((value) => value > 0) || 0;
   const raw = roundMoney(cardmarket || tcgPrice || 0);
   return estimateFallbackValues(raw);
+}
+
+function extractAutoCardData(card) {
+  if (!card || typeof card !== "object") return {};
+
+  return {
+    name: cleanText(card.name),
+    set: cleanText(card.set?.name),
+    number: cleanText(card.number),
+    rarity: cleanText(card.rarity),
+    supertype: cleanText(card.supertype),
+    subtypes: asCleanStringArray(card.subtypes),
+    hp: cleanText(card.hp),
+    types: asCleanStringArray(card.types),
+    evolvesFrom: cleanText(card.evolvesFrom),
+    evolvesTo: asCleanStringArray(card.evolvesTo),
+    abilities: Array.isArray(card.abilities)
+      ? card.abilities
+        .map((ability) => ({
+          name: cleanText(ability?.name),
+          text: cleanText(ability?.text),
+          type: cleanText(ability?.type),
+        }))
+        .filter((ability) => ability.name || ability.text || ability.type)
+      : [],
+    attacks: Array.isArray(card.attacks)
+      ? card.attacks
+        .map((attack) => ({
+          name: cleanText(attack?.name),
+          text: cleanText(attack?.text),
+          damage: cleanText(attack?.damage),
+          cost: asCleanStringArray(attack?.cost),
+          convertedEnergyCost: Number(attack?.convertedEnergyCost) || 0,
+        }))
+        .filter((attack) => attack.name || attack.text || attack.damage)
+      : [],
+    weaknesses: Array.isArray(card.weaknesses)
+      ? card.weaknesses
+        .map((row) => ({
+          type: cleanText(row?.type),
+          value: cleanText(row?.value),
+        }))
+        .filter((row) => row.type || row.value)
+      : [],
+    resistances: Array.isArray(card.resistances)
+      ? card.resistances
+        .map((row) => ({
+          type: cleanText(row?.type),
+          value: cleanText(row?.value),
+        }))
+        .filter((row) => row.type || row.value)
+      : [],
+    retreatCost: asCleanStringArray(card.retreatCost),
+    convertedRetreatCost: Number(card.convertedRetreatCost) || 0,
+    artist: cleanText(card.artist),
+    flavorText: cleanText(card.flavorText),
+    regulationMark: cleanText(card.regulationMark),
+    rules: asCleanStringArray(card.rules),
+    legalities: card.legalities && typeof card.legalities === "object" ? {
+      unlimited: cleanText(card.legalities.unlimited),
+      expanded: cleanText(card.legalities.expanded),
+      standard: cleanText(card.legalities.standard),
+    } : {},
+    nationalPokedexNumbers: Array.isArray(card.nationalPokedexNumbers)
+      ? card.nationalPokedexNumbers.filter((n) => Number.isFinite(Number(n))).map((n) => Number(n))
+      : [],
+    images: {
+      small: cleanText(card.images?.small),
+      large: cleanText(card.images?.large),
+    },
+    tcg: {
+      id: cleanText(card.id),
+      setId: cleanText(card.set?.id),
+      setSeries: cleanText(card.set?.series),
+      setTotal: Number(card.set?.total) || 0,
+      setPrintedTotal: Number(card.set?.printedTotal) || 0,
+      releaseDate: cleanText(card.set?.releaseDate),
+      ptcgoCode: cleanText(card.set?.ptcgoCode),
+      tcgplayerUrl: cleanText(card.tcgplayer?.url),
+      cardmarketUrl: cleanText(card.cardmarket?.url),
+    },
+  };
+}
+
+function extractOcrCardHints(ocrText) {
+  const text = String(ocrText || "");
+  const probableName = guessPokemonName(text);
+  const number = text.match(/\b\d{1,3}\/\d{1,3}\b/i)?.[0] || "";
+  const hp = text.match(/\b(\d{2,3})\s*hp\b/i)?.[1] || "";
+
+  return {
+    name: probableName ? titleCase(probableName) : "",
+    set: "",
+    number,
+    rarity: "",
+    hp,
+  };
+}
+
+function asCleanStringArray(values) {
+  if (!Array.isArray(values)) return [];
+  return values.map((value) => cleanText(value)).filter(Boolean);
+}
+
+function countAutoCapturedFields(record) {
+  if (!record || typeof record !== "object") return 0;
+  const keys = [
+    "name", "set", "number", "rarity", "supertype", "hp", "evolvesFrom", "artist", "flavorText", "regulationMark",
+  ];
+
+  let count = keys.reduce((sum, key) => sum + (cleanText(record[key]) ? 1 : 0), 0);
+  const lists = [
+    "subtypes", "types", "evolvesTo", "abilities", "attacks", "weaknesses", "resistances", "retreatCost", "rules", "nationalPokedexNumbers",
+  ];
+  count += lists.reduce((sum, key) => sum + (Array.isArray(record[key]) && record[key].length ? 1 : 0), 0);
+  if (record.tcg && typeof record.tcg === "object" && cleanText(record.tcg.id)) count += 1;
+  if (record.images && typeof record.images === "object" && (cleanText(record.images.small) || cleanText(record.images.large))) count += 1;
+
+  return count;
 }
 
 function estimateFallbackValues(raw) {
