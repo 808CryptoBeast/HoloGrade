@@ -104,6 +104,8 @@ const NEWS_RSS_URL = "https://news.google.com/rss/search?q=Pokemon TCG&hl=en-US&
 
 const state = {
   cards: [],
+  removedCards: [],
+  removedBinders: [],
   binders: [
     defaultBinder(),
   ],
@@ -160,6 +162,7 @@ const els = {
   binderFilter: byId("binderFilter"),
   collectionCount: byId("collectionCount"),
   collectionSummary: byId("collectionSummary"),
+  recoveryPanel: byId("recoveryPanel"),
   binderShelf: byId("binderShelf"),
 
   profileName: byId("profileName"),
@@ -331,6 +334,7 @@ function wireCardDetailModal() {
     if (!card) return;
     const ok = window.confirm(`Remove ${card.name} from your binder?`);
     if (!ok) return;
+    archiveRemovedCard(card, "modal-remove");
     state.cards = state.cards.filter((item) => item.id !== card.id);
     closeCardDetailModal();
     persist();
@@ -909,6 +913,7 @@ function renderCollection() {
 
   els.collectionCount.textContent = `${filtered.length} card${filtered.length === 1 ? "" : "s"}`;
   renderSummary();
+  renderRecoveryPanel();
 
   const binders = state.binders
     .map((binder) => ({
@@ -1240,6 +1245,164 @@ function renderCollection() {
 
     els.binderShelf.appendChild(block);
   });
+}
+
+function renderRecoveryPanel() {
+  if (!els.recoveryPanel) return;
+  const removedCards = Array.isArray(state.removedCards) ? state.removedCards : [];
+  const removedBinders = Array.isArray(state.removedBinders) ? state.removedBinders : [];
+
+  if (!removedCards.length && !removedBinders.length) {
+    els.recoveryPanel.innerHTML = "";
+    els.recoveryPanel.classList.add("hidden");
+    return;
+  }
+
+  els.recoveryPanel.classList.remove("hidden");
+
+  const cardItems = removedCards.slice(0, 20).map((entry) => `
+    <article class="recovery-item">
+      <div>
+        <strong>${escapeHtml(entry.card?.name || "Card")}</strong>
+        <p class="meta">Removed from ${escapeHtml(getBinderLabel(entry.card?.binderId))} · Page ${Number(entry.card?.page || 1)}</p>
+      </div>
+      <button class="btn ghost small" type="button" data-action="restore-card" data-entry-id="${entry.id}">Restore Card</button>
+    </article>
+  `).join("");
+
+  const binderItems = removedBinders.slice(0, 10).map((entry) => `
+    <article class="recovery-item">
+      <div>
+        <strong>${escapeHtml(entry.binder?.name || "Binder")}</strong>
+        <p class="meta">Deleted binder snapshot · ${entry.cards.length} cards</p>
+      </div>
+      <button class="btn ghost small" type="button" data-action="restore-binder" data-entry-id="${entry.id}">Restore Binder + Cards</button>
+    </article>
+  `).join("");
+
+  els.recoveryPanel.innerHTML = `
+    <div class="row-between">
+      <h3>Recently Removed</h3>
+      <button class="btn ghost small" type="button" data-action="clear-recovery">Clear History</button>
+    </div>
+    <div class="recovery-list">
+      ${binderItems}
+      ${cardItems}
+    </div>
+  `;
+
+  els.recoveryPanel.querySelectorAll('button[data-action="restore-card"]').forEach((button) => {
+    button.addEventListener("click", () => {
+      restoreRemovedCard(button.dataset.entryId);
+    });
+  });
+
+  els.recoveryPanel.querySelectorAll('button[data-action="restore-binder"]').forEach((button) => {
+    button.addEventListener("click", () => {
+      restoreRemovedBinder(button.dataset.entryId);
+    });
+  });
+
+  const clearBtn = els.recoveryPanel.querySelector('button[data-action="clear-recovery"]');
+  clearBtn?.addEventListener("click", () => {
+    state.removedCards = [];
+    state.removedBinders = [];
+    persist();
+    renderCollection();
+  });
+}
+
+function archiveRemovedCard(card, reason = "removed") {
+  if (!card) return;
+  const entry = {
+    id: cryptoRandom(),
+    reason,
+    removedAt: Date.now(),
+    card: JSON.parse(JSON.stringify(card)),
+  };
+  state.removedCards = [entry, ...(state.removedCards || [])].slice(0, 80);
+}
+
+function restoreRemovedCard(entryId) {
+  const removed = (state.removedCards || []).find((entry) => entry.id === entryId);
+  if (!removed?.card) return;
+  const card = JSON.parse(JSON.stringify(removed.card));
+  const binderExists = state.binders.some((binder) => binder.id === card.binderId);
+  if (!binderExists) {
+    const fallback = state.binders[0];
+    card.binderId = fallback.id;
+    card.page = findPageWithSpace(fallback.id);
+    card.slotOrder = getNextSlotOrder(fallback.id, card.page);
+  } else {
+    card.page = clamp(Number(card.page) || 1, 1, Math.max(1, Number(state.binders.find((b) => b.id === card.binderId)?.pages || 1)));
+    card.slotOrder = getNextSlotOrder(card.binderId, card.page);
+  }
+
+  if (!card.id || state.cards.some((item) => item.id === card.id)) {
+    card.id = cryptoRandom();
+  }
+
+  state.cards = [card, ...state.cards];
+  state.removedCards = (state.removedCards || []).filter((entry) => entry.id !== entryId);
+  persist();
+  refreshBinderSelects();
+  renderCollection();
+  renderBinderManager();
+  status(`${card.name} restored.`);
+}
+
+function archiveDeletedBinder(binder, cardsInBinder) {
+  if (!binder) return;
+  const snapshot = {
+    id: cryptoRandom(),
+    removedAt: Date.now(),
+    binder: JSON.parse(JSON.stringify(binder)),
+    cards: cardsInBinder.map((card) => ({
+      id: card.id,
+      page: Number(card.page || 1),
+      slotOrder: Number(card.slotOrder || 0),
+    })),
+  };
+  state.removedBinders = [snapshot, ...(state.removedBinders || [])].slice(0, 30);
+}
+
+function restoreRemovedBinder(entryId) {
+  const entry = (state.removedBinders || []).find((item) => item.id === entryId);
+  if (!entry?.binder) return;
+
+  const originalBinder = entry.binder;
+  let restoredId = originalBinder.id;
+  if (state.binders.some((binder) => binder.id === restoredId)) {
+    restoredId = cryptoRandom();
+  }
+
+  const restoredBinder = {
+    ...defaultBinder(originalBinder.name || "Restored Binder"),
+    ...originalBinder,
+    id: restoredId,
+    pages: Math.max(1, Number(originalBinder.pages) || 1),
+  };
+
+  state.binders.push(restoredBinder);
+
+  const movedMap = new Map((entry.cards || []).map((item) => [item.id, item]));
+  state.cards = state.cards.map((card) => {
+    const prev = movedMap.get(card.id);
+    if (!prev) return card;
+    return {
+      ...card,
+      binderId: restoredId,
+      page: clamp(Number(prev.page) || 1, 1, restoredBinder.pages),
+      slotOrder: Number(prev.slotOrder) || getNextSlotOrder(restoredId, Number(prev.page) || 1),
+    };
+  });
+
+  state.removedBinders = (state.removedBinders || []).filter((item) => item.id !== entryId);
+  persist();
+  refreshBinderSelects();
+  renderCollection();
+  renderBinderManager();
+  status(`${restoredBinder.name} and card placements restored.`);
 }
 
 function openBinderBook(binderId, leftPage = 1) {
@@ -1589,9 +1752,52 @@ function normalizeScenePanels(scenePanels, legacy = {}) {
     ? scenePanels
     : buildLegacyScenePanels(legacy);
 
-  return list
+  const normalized = list
     .map((panel, index) => normalizeScenePanel(panel, index))
     .filter(Boolean);
+
+  const placed = [];
+  normalized.forEach((panel) => {
+    const anchor = findNearestPanelAnchorInGrid(placed, panel.anchor, panel.colSpan, panel.rowSpan);
+    const candidate = { ...panel, anchor };
+    if (isPanelPlacementValid(placed, candidate)) {
+      placed.push(candidate);
+    }
+  });
+
+  return placed;
+}
+
+function findNearestPanelAnchorInGrid(existingPanels, preferredAnchor, colSpan, rowSpan) {
+  const preferred = clamp(Number(preferredAnchor) || 1, 1, 9);
+  const safeColSpan = clamp(Number(colSpan) || 1, 1, 3);
+  const safeRowSpan = clamp(Number(rowSpan) || 1, 1, 3);
+  const candidates = Array.from({ length: 9 }, (_, index) => index + 1)
+    .sort((a, b) => Math.abs(a - preferred) - Math.abs(b - preferred));
+
+  for (const anchor of candidates) {
+    const candidate = { anchor, colSpan: safeColSpan, rowSpan: safeRowSpan };
+    const covered = getPanelCoveredSlots(candidate);
+    if (covered.length !== safeColSpan * safeRowSpan) continue;
+    if (isPanelPlacementValid(existingPanels, candidate)) return anchor;
+  }
+
+  return 1;
+}
+
+function getPanelGridPlacement(panel) {
+  const colSpan = clamp(Number(panel?.colSpan) || 1, 1, 3);
+  const rowSpan = clamp(Number(panel?.rowSpan) || 1, 1, 3);
+  const rawColStart = ((clamp(Number(panel?.anchor) || 1, 1, 9) - 1) % 3) + 1;
+  const rawRowStart = Math.ceil(clamp(Number(panel?.anchor) || 1, 1, 9) / 3);
+  const colStart = clamp(rawColStart, 1, 4 - colSpan);
+  const rowStart = clamp(rawRowStart, 1, 4 - rowSpan);
+  return {
+    colStart,
+    rowStart,
+    colEnd: colStart + colSpan,
+    rowEnd: rowStart + rowSpan,
+  };
 }
 
 function buildLegacyScenePanels(legacy) {
@@ -1756,12 +1962,13 @@ function renderPanelLayoutEditor(target, binder, page) {
   }
 
   theme.scenePanels.forEach((panel) => {
+    const placement = getPanelGridPlacement(panel);
     const node = document.createElement("button");
     node.type = "button";
     node.className = "panel-layout-scene";
     node.dataset.panelId = panel.id;
-    node.style.gridColumn = `${((panel.anchor - 1) % 3) + 1} / span ${panel.colSpan}`;
-    node.style.gridRow = `${Math.ceil(panel.anchor / 3)} / span ${panel.rowSpan}`;
+    node.style.gridColumn = `${placement.colStart} / ${placement.colEnd}`;
+    node.style.gridRow = `${placement.rowStart} / ${placement.rowEnd}`;
     applyScenePanelBackgroundStyles(node, theme, panel);
     node.style.zIndex = String(clamp(Number(panel.layer) || 12, 1, 40));
     node.innerHTML = `<span>${escapeHtml(panel.title || "Scene Art")}</span>`;
@@ -2297,6 +2504,7 @@ function renderCardItem(card, context) {
   del.addEventListener("click", () => {
     const ok = window.confirm(`Remove ${card.name} from your collection?`);
     if (!ok) return;
+    archiveRemovedCard(card, "list-remove");
     state.cards = state.cards.filter((c) => c.id !== card.id);
     persist();
     renderCollection();
@@ -2431,6 +2639,8 @@ function exportBackup() {
     exportedAt: new Date().toISOString(),
     state: {
       cards: state.cards,
+      removedCards: state.removedCards,
+      removedBinders: state.removedBinders,
       binders: state.binders,
       profile: state.profile,
       activeTheme: state.activeTheme,
@@ -2462,6 +2672,8 @@ async function importBackup(event) {
       throw new Error("Backup file is missing cards or binders.");
     }
     state.cards = next.cards;
+    state.removedCards = Array.isArray(next.removedCards) ? next.removedCards : [];
+    state.removedBinders = Array.isArray(next.removedBinders) ? next.removedBinders : [];
     state.binders = next.binders;
     state.profile = typeof next.profile === "object" && next.profile ? {
       name: cleanText(next.profile.name) || "Collector",
@@ -3717,6 +3929,8 @@ function renderBinderManager() {
       );
       if (!ok) return;
 
+      archiveDeletedBinder(binder, cardsInBinder);
+
       state.cards = state.cards.map((card) => {
         if (card.binderId !== binder.id) return card;
         const page = findPageWithSpace(fallback.id);
@@ -3774,6 +3988,8 @@ function loadState() {
 
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed.cards)) state.cards = parsed.cards;
+    if (Array.isArray(parsed.removedCards)) state.removedCards = parsed.removedCards;
+    if (Array.isArray(parsed.removedBinders)) state.removedBinders = parsed.removedBinders;
     if (Array.isArray(parsed.binders) && parsed.binders.length) state.binders = parsed.binders;
     if (parsed.profile && typeof parsed.profile === "object") {
       state.profile = {
@@ -3795,6 +4011,8 @@ function loadState() {
 function persist() {
   const payload = {
     cards: state.cards,
+    removedCards: state.removedCards,
+    removedBinders: state.removedBinders,
     binders: state.binders,
     profile: state.profile,
     activeTheme: state.activeTheme,
