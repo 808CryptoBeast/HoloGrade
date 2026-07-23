@@ -54,7 +54,7 @@
       <section id="tab-scan" class="tab-panel" aria-labelledby="scan-tab">
         <div class="panel">
           <h2>Card Scan</h2>
-          <p class="muted">Use your phone camera or upload a photo. We estimate condition and try to identify the card.</p>
+          <p class="muted">Use your phone camera, upload a photo, or upload a short video. We auto-crop the card before OCR and match against public card archives, but lower-confidence results still need review.</p>
 
           <div id="cameraBox" class="camera-box hidden">
             <video id="cameraVideo" playsinline autoplay muted></video>
@@ -67,12 +67,13 @@
 
           <div id="scanStart" class="scan-start">
             <button id="startCameraBtn" class="btn primary" type="button">Open Camera</button>
-            <label class="btn ghost" for="uploadInput">Upload Photo</label>
-            <input id="uploadInput" type="file" accept="image/*" hidden />
+            <label class="btn ghost" for="uploadInput">Upload Photo or Video</label>
+            <input id="uploadInput" type="file" accept="image/*,video/*" hidden />
           </div>
 
           <div id="previewWrap" class="preview-wrap hidden">
             <img id="previewImage" alt="Scanned card preview" />
+            <video id="previewVideo" class="hidden" playsinline muted loop controls></video>
             <div class="preview-actions">
               <button id="analyzeBtn" class="btn primary" type="button">Analyze Card</button>
               <button id="resetScanBtn" class="btn ghost" type="button">Reset</button>

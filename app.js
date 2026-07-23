@@ -137,6 +137,7 @@ const els = {
   scanStart: byId("scanStart"),
   previewWrap: byId("previewWrap"),
   previewImage: byId("previewImage"),
+  previewVideo: byId("previewVideo"),
   analyzeBtn: byId("analyzeBtn"),
   resetScanBtn: byId("resetScanBtn"),
   scanStatus: byId("scanStatus"),
@@ -223,6 +224,9 @@ const runtime = {
   stream: null,
   imageDataUrl: null,
   imageBitmap: null,
+  previewMediaUrl: null,
+  previewMediaType: "image",
+  previewMediaIsObjectUrl: false,
   viewPageByBinder: {},
   dragCardId: null,
   openBinders: {},
@@ -449,9 +453,19 @@ function wireScan() {
   els.uploadInput.addEventListener("change", async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const dataUrl = await fileToDataUrl(file);
-    await setScanImage(dataUrl);
-    status("Image uploaded. Ready to analyze.");
+    if (String(file.type || "").startsWith("video/")) {
+      const clip = await extractBestFrameFromVideo(file);
+      await setScanImage(clip.frameDataUrl, {
+        previewType: "video",
+        previewUrl: clip.previewUrl,
+        previewIsObjectUrl: true,
+      });
+      status("Video uploaded. Best frame extracted and ready to analyze.");
+    } else {
+      const dataUrl = await fileToDataUrl(file);
+      await setScanImage(dataUrl, { previewType: "image" });
+      status("Image uploaded. Ready to analyze.");
+    }
     event.target.value = "";
   });
 
@@ -478,14 +492,20 @@ async function openCamera() {
         facingMode: { ideal: "environment" },
         width: { ideal: 1920 },
         height: { ideal: 1080 },
+        advanced: [
+          { focusMode: "continuous" },
+          { exposureMode: "continuous" },
+          { whiteBalanceMode: "continuous" },
+        ],
       },
       audio: false,
     });
 
     runtime.stream = stream;
+    await optimizeCameraTrack(stream.getVideoTracks()[0]);
     els.cameraVideo.srcObject = stream;
     els.cameraBox.classList.remove("hidden");
-    status("Camera ready. Place card in frame and capture.");
+    status("Camera ready. Place the full card inside the guide for auto-crop.");
   } catch (error) {
     status("Camera permission denied or unavailable. Use upload photo.");
   }
@@ -511,10 +531,10 @@ function captureFromVideo() {
   return canvas.toDataURL("image/jpeg", 0.9);
 }
 
-async function setScanImage(dataUrl) {
+async function setScanImage(dataUrl, options = {}) {
   runtime.imageDataUrl = dataUrl;
-  runtime.imageBitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
-  els.previewImage.src = dataUrl;
+  runtime.imageBitmap = await dataUrlToBitmap(dataUrl);
+  setScanPreview(options.previewUrl || dataUrl, options.previewType || "image", !!options.previewIsObjectUrl);
   els.previewWrap.classList.remove("hidden");
   els.scanStart.classList.add("hidden");
   state.analysis = null;
@@ -527,19 +547,24 @@ async function analyzeCurrentImage() {
     return;
   }
 
+  status("Detecting card edges and preparing scan...");
+  const prepared = await prepareScanForAnalysis(runtime.imageDataUrl);
+
   status("Analyzing card condition...");
-  const quality = estimateCondition(runtime.imageBitmap);
+  const quality = estimateCondition(prepared.imageBitmap);
 
   status("Reading card text with OCR...");
-  const text = await runOcr(runtime.imageDataUrl);
+  const text = await runOcr(prepared.dataUrl, runtime.imageDataUrl);
 
-  status("Looking up Pokemon card data...");
-  const cardInfo = await identifyCard(text);
+  status("Matching against known card archives...");
+  const cardInfo = await identifyCard(text, prepared.hints);
 
   const analysis = buildAnalysisResult(quality, cardInfo, text);
   state.analysis = analysis;
   renderResult(analysis);
-  status(`Analysis complete. Auto-filled ${analysis.autoFieldCount} fields. Review and save.`);
+  runtime.imageDataUrl = prepared.dataUrl;
+  runtime.imageBitmap = prepared.imageBitmap;
+  status(`Analysis complete. ${prepared.cropDetected ? "Auto-crop locked onto the card." : "Auto-crop could not fully lock, so the original frame was used."} Confidence: ${analysis.confidence}. Review before saving.`);
 }
 
 function estimateCondition(imageBitmap) {
@@ -581,7 +606,7 @@ function estimateCondition(imageBitmap) {
   };
 }
 
-async function runOcr(dataUrl) {
+async function runOcr(dataUrl, fallbackDataUrl = "") {
   if (!window.Tesseract) return "";
   try {
     const result = await window.Tesseract.recognize(dataUrl, "eng", {
@@ -597,7 +622,14 @@ async function runOcr(dataUrl) {
     const topStrip = await makeTopStripDataUrl(dataUrl);
     const topResult = await window.Tesseract.recognize(topStrip, "eng");
 
-    return [result?.data?.text || "", topResult?.data?.text || ""]
+    let fallbackResult = "";
+    if (fallbackDataUrl && fallbackDataUrl !== dataUrl) {
+      const fallbackStrip = await makeTopStripDataUrl(fallbackDataUrl);
+      const fallbackTop = await window.Tesseract.recognize(fallbackStrip, "eng");
+      fallbackResult = fallbackTop?.data?.text || "";
+    }
+
+    return [result?.data?.text || "", topResult?.data?.text || "", fallbackResult]
       .join(" ")
       .replace(/\s+/g, " ")
       .trim();
@@ -606,11 +638,12 @@ async function runOcr(dataUrl) {
   }
 }
 
-async function identifyCard(ocrText) {
+async function identifyCard(ocrText, scanHints = {}) {
   const cleaned = sanitizeOcrText(ocrText);
   const probableName = guessPokemonName(cleaned);
   const tokens = extractSearchTokens(cleaned);
-  const ocrHints = extractOcrCardHints(cleaned);
+  const ocrHints = { ...extractOcrCardHints(cleaned), ...scanHints };
+  const collectorNumber = normalizeCollectorNumber(ocrHints.number);
 
   if (!probableName && !tokens.length) {
     return {
@@ -628,10 +661,16 @@ async function identifyCard(ocrText) {
   const seen = new Set();
 
   const queries = [];
+  if (probableName && collectorNumber) {
+    queries.push(`name:"${probableName}" number:"${collectorNumber}"`);
+  }
   if (probableName) {
     queries.push(`name:"${probableName}"`);
     queries.push(`name:${probableName}`);
     queries.push(`name:*${probableName}*`);
+  }
+  if (collectorNumber) {
+    queries.push(`number:"${collectorNumber}"`);
   }
   tokens.slice(0, 6).forEach((token) => {
     queries.push(`name:*${token}*`);
@@ -671,10 +710,13 @@ async function identifyCard(ocrText) {
     }
 
     const scored = candidates
-      .map((card) => ({ card, score: scoreCardMatch(card, cleaned) }))
+      .map((card) => ({ card, score: scoreCardMatch(card, cleaned, ocrHints) }))
       .sort((a, b) => b.score - a.score);
 
     const first = scored[0].card;
+    const leadScore = Number(scored[0]?.score || 0);
+    const secondScore = Number(scored[1]?.score || 0);
+    const scoreGap = leadScore - secondScore;
     const autoRecord = {
       ...ocrHints,
       ...extractAutoCardData(first),
@@ -687,7 +729,7 @@ async function identifyCard(ocrText) {
       number: autoRecord.number || first.number || "",
       rarity: autoRecord.rarity || first.rarity || "",
       values: extractCardValues(first),
-      confidence: "high",
+      confidence: resolveLookupConfidence(first, ocrHints, leadScore, scoreGap),
       autoRecord,
     };
   } catch {
@@ -706,7 +748,7 @@ async function identifyCard(ocrText) {
 function buildAnalysisResult(quality, cardInfo, ocrText) {
   const autoRecord = cardInfo.autoRecord || extractOcrCardHints(ocrText);
   const note = cardInfo.found
-    ? "Card match found from OCR text and public TCG database."
+    ? "Card match found from OCR text and public card archives. Review if confidence is not high."
     : "Card match is uncertain. Edit fields before saving.";
 
   return {
@@ -770,6 +812,9 @@ function renderResult(analysis) {
       ["Abilities", asCountLabel(analysis.autoRecord?.abilities, "ability")],
       ["Attacks", asCountLabel(analysis.autoRecord?.attacks, "attack")],
       ["Rules", asCountLabel(analysis.autoRecord?.rules, "rule")],
+      ["Set Archive", analysis.autoRecord?.archives?.setArchiveUrl],
+      ["TCGplayer", analysis.autoRecord?.tcg?.tcgplayerUrl],
+      ["Cardmarket", analysis.autoRecord?.tcg?.cardmarketUrl],
       ["Scan Confidence", analysis.confidence],
       ["Auto Fields", String(analysis.autoFieldCount || 0)],
     ],
@@ -865,9 +910,9 @@ function resetScanFlow() {
   stopCamera();
   runtime.imageDataUrl = null;
   runtime.imageBitmap = null;
+  clearScanPreview();
   state.analysis = null;
 
-  els.previewImage.src = "";
   els.previewWrap.classList.add("hidden");
   els.scanStart.classList.remove("hidden");
   els.resultPanel.classList.add("hidden");
@@ -4492,6 +4537,10 @@ function extractAutoCardData(card) {
       small: cleanText(card.images?.small),
       large: cleanText(card.images?.large),
     },
+    archives: {
+      setArchiveUrl: buildPokemonSetArchiveUrl(card.set),
+      imageLibraryUrl: cleanText(card.images?.large) || cleanText(card.images?.small),
+    },
     tcg: {
       id: cleanText(card.id),
       setId: cleanText(card.set?.id),
@@ -4509,16 +4558,329 @@ function extractAutoCardData(card) {
 function extractOcrCardHints(ocrText) {
   const text = String(ocrText || "");
   const probableName = guessPokemonName(text);
-  const number = text.match(/\b\d{1,3}\/\d{1,3}\b/i)?.[0] || "";
+  const numberMatch = text.match(/\b([a-z]{0,3}\d{1,3})\s*\/\s*(\d{1,3})\b/i);
+  const looseNumber = text.match(/\b([a-z]{0,3}\d{1,3})\b/i)?.[1] || "";
   const hp = text.match(/\b(\d{2,3})\s*hp\b/i)?.[1] || "";
 
   return {
     name: probableName ? titleCase(probableName) : "",
     set: "",
-    number,
+    number: numberMatch ? `${numberMatch[1]}/${numberMatch[2]}` : looseNumber,
     rarity: "",
     hp,
   };
+}
+
+async function optimizeCameraTrack(track) {
+  if (!track?.getCapabilities || !track?.applyConstraints) return;
+  try {
+    const capabilities = track.getCapabilities();
+    const advanced = [];
+    if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("continuous")) {
+      advanced.push({ focusMode: "continuous" });
+    }
+    if (Array.isArray(capabilities.exposureMode) && capabilities.exposureMode.includes("continuous")) {
+      advanced.push({ exposureMode: "continuous" });
+    }
+    if (Array.isArray(capabilities.whiteBalanceMode) && capabilities.whiteBalanceMode.includes("continuous")) {
+      advanced.push({ whiteBalanceMode: "continuous" });
+    }
+    if (capabilities.zoom?.max && capabilities.zoom.max >= 2) {
+      advanced.push({ zoom: Math.min(2, capabilities.zoom.max) });
+    }
+    if (advanced.length) {
+      await track.applyConstraints({ advanced });
+    }
+  } catch {
+    // Best-effort only; unsupported camera controls should not block scanning.
+  }
+}
+
+function setScanPreview(url, mediaType, isObjectUrl = false) {
+  clearScanPreview();
+  runtime.previewMediaUrl = url;
+  runtime.previewMediaType = mediaType === "video" ? "video" : "image";
+  runtime.previewMediaIsObjectUrl = !!isObjectUrl;
+
+  if (runtime.previewMediaType === "video") {
+    els.previewVideo.src = url;
+    els.previewVideo.classList.remove("hidden");
+    els.previewImage.classList.add("hidden");
+    els.previewImage.src = "";
+  } else {
+    els.previewImage.src = url;
+    els.previewImage.classList.remove("hidden");
+    els.previewVideo.classList.add("hidden");
+    els.previewVideo.removeAttribute("src");
+    els.previewVideo.load();
+  }
+}
+
+function clearScanPreview() {
+  if (runtime.previewMediaIsObjectUrl && runtime.previewMediaUrl) {
+    URL.revokeObjectURL(runtime.previewMediaUrl);
+  }
+  runtime.previewMediaUrl = null;
+  runtime.previewMediaType = "image";
+  runtime.previewMediaIsObjectUrl = false;
+  els.previewImage.src = "";
+  els.previewImage.classList.remove("hidden");
+  els.previewVideo.classList.add("hidden");
+  els.previewVideo.removeAttribute("src");
+  els.previewVideo.load();
+}
+
+async function dataUrlToBitmap(dataUrl) {
+  return createImageBitmap(await (await fetch(dataUrl)).blob());
+}
+
+async function prepareScanForAnalysis(dataUrl) {
+  const bitmap = await dataUrlToBitmap(dataUrl);
+  const sourceCanvas = document.createElement("canvas");
+  const scale = Math.min(1, 1400 / Math.max(bitmap.width, bitmap.height));
+  sourceCanvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  sourceCanvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0, sourceCanvas.width, sourceCanvas.height);
+
+  const bounds = detectCardBounds(sourceCanvas);
+  if (!bounds) {
+    return {
+      dataUrl,
+      imageBitmap: bitmap,
+      cropDetected: false,
+      hints: {},
+    };
+  }
+
+  const normalized = normalizeCardCrop(sourceCanvas, bounds);
+  return {
+    dataUrl: normalized,
+    imageBitmap: await dataUrlToBitmap(normalized),
+    cropDetected: true,
+    hints: {},
+  };
+}
+
+function detectCardBounds(canvas) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const { width, height } = canvas;
+  if (!width || !height) return null;
+  const imageData = ctx.getImageData(0, 0, width, height).data;
+  const grayscale = new Float32Array(width * height);
+  for (let i = 0, p = 0; i < imageData.length; i += 4, p += 1) {
+    grayscale[p] = (0.299 * imageData[i]) + (0.587 * imageData[i + 1]) + (0.114 * imageData[i + 2]);
+  }
+
+  const colScores = new Array(width).fill(0);
+  const rowScores = new Array(height).fill(0);
+
+  for (let x = 1; x < width; x += 1) {
+    let total = 0;
+    let count = 0;
+    for (let y = 1; y < height; y += 4) {
+      const here = grayscale[(y * width) + x];
+      const prev = grayscale[(y * width) + x - 1];
+      total += Math.abs(here - prev);
+      count += 1;
+    }
+    colScores[x] = count ? total / count : 0;
+  }
+
+  for (let y = 1; y < height; y += 1) {
+    let total = 0;
+    let count = 0;
+    for (let x = 1; x < width; x += 4) {
+      const here = grayscale[(y * width) + x];
+      const prev = grayscale[((y - 1) * width) + x];
+      total += Math.abs(here - prev);
+      count += 1;
+    }
+    rowScores[y] = count ? total / count : 0;
+  }
+
+  const smoothCols = smoothSeries(colScores, 9);
+  const smoothRows = smoothSeries(rowScores, 9);
+  const left = findPeakIndex(smoothCols, Math.floor(width * 0.06), Math.floor(width * 0.42));
+  const right = findPeakIndex(smoothCols, Math.floor(width * 0.58), Math.floor(width * 0.94));
+  const top = findPeakIndex(smoothRows, Math.floor(height * 0.06), Math.floor(height * 0.38));
+  const bottom = findPeakIndex(smoothRows, Math.floor(height * 0.62), Math.floor(height * 0.94));
+
+  if ([left, right, top, bottom].some((value) => value == null)) return null;
+  const cropWidth = right - left;
+  const cropHeight = bottom - top;
+  if (cropWidth < width * 0.28 || cropHeight < height * 0.35) return null;
+
+  const ratio = cropWidth / cropHeight;
+  if (ratio < 0.58 || ratio > 0.82) return null;
+
+  const threshold = average(smoothCols.concat(smoothRows)) * 0.9;
+  if (smoothCols[left] < threshold || smoothCols[right] < threshold || smoothRows[top] < threshold || smoothRows[bottom] < threshold) {
+    return null;
+  }
+
+  const padX = Math.round(cropWidth * 0.03);
+  const padY = Math.round(cropHeight * 0.03);
+  return {
+    x: clamp(left - padX, 0, width - 1),
+    y: clamp(top - padY, 0, height - 1),
+    width: clamp(cropWidth + (padX * 2), 1, width),
+    height: clamp(cropHeight + (padY * 2), 1, height),
+  };
+}
+
+function normalizeCardCrop(sourceCanvas, bounds) {
+  const targetWidth = 900;
+  const targetHeight = 1260;
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "#101820";
+  ctx.fillRect(0, 0, targetWidth, targetHeight);
+  ctx.drawImage(sourceCanvas, bounds.x, bounds.y, bounds.width, bounds.height, 0, 0, targetWidth, targetHeight);
+
+  const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = clamp((data[i] - 8) * 1.08 + 8, 0, 255);
+    data[i + 1] = clamp((data[i + 1] - 8) * 1.08 + 8, 0, 255);
+    data[i + 2] = clamp((data[i + 2] - 8) * 1.08 + 8, 0, 255);
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas.toDataURL("image/jpeg", 0.92);
+}
+
+function smoothSeries(values, radius) {
+  return values.map((_, index) => {
+    let total = 0;
+    let count = 0;
+    for (let offset = -radius; offset <= radius; offset += 1) {
+      const value = values[index + offset];
+      if (value == null) continue;
+      total += value;
+      count += 1;
+    }
+    return count ? total / count : 0;
+  });
+}
+
+function findPeakIndex(values, start, end) {
+  let peakIndex = null;
+  let peakValue = -Infinity;
+  for (let index = Math.max(0, start); index <= Math.min(values.length - 1, end); index += 1) {
+    if (values[index] > peakValue) {
+      peakValue = values[index];
+      peakIndex = index;
+    }
+  }
+  return peakIndex;
+}
+
+function average(values) {
+  if (!Array.isArray(values) || !values.length) return 0;
+  return values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length;
+}
+
+async function extractBestFrameFromVideo(file) {
+  const previewUrl = URL.createObjectURL(file);
+  const video = document.createElement("video");
+  video.preload = "metadata";
+  video.muted = true;
+  video.playsInline = true;
+  video.src = previewUrl;
+
+  await waitForVideoEvent(video, "loadedmetadata");
+
+  const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
+  const checkpoints = [0.08, 0.22, 0.4, 0.6, 0.82]
+    .map((ratio) => Math.min(duration - 0.05, Math.max(0, duration * ratio)))
+    .filter((time, index, list) => time >= 0 && list.indexOf(time) === index);
+
+  let bestFrame = null;
+  let bestScore = -Infinity;
+
+  for (const time of checkpoints) {
+    const frameDataUrl = await captureVideoFrame(video, time);
+    const score = await scoreFrameClarity(frameDataUrl);
+    if (score > bestScore) {
+      bestScore = score;
+      bestFrame = frameDataUrl;
+    }
+  }
+
+  return {
+    frameDataUrl: bestFrame || await captureVideoFrame(video, 0),
+    previewUrl,
+  };
+}
+
+function waitForVideoEvent(video, eventName) {
+  return new Promise((resolve, reject) => {
+    const onDone = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error("Could not read video file"));
+    };
+    const cleanup = () => {
+      video.removeEventListener(eventName, onDone);
+      video.removeEventListener("error", onError);
+    };
+    video.addEventListener(eventName, onDone, { once: true });
+    video.addEventListener("error", onError, { once: true });
+  });
+}
+
+async function captureVideoFrame(video, time) {
+  const safeTime = Math.max(0, Number(time) || 0);
+  if (Math.abs(video.currentTime - safeTime) > 0.02) {
+    video.currentTime = safeTime;
+    await waitForVideoEvent(video, "seeked");
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.9);
+}
+
+async function scoreFrameClarity(dataUrl) {
+  const bitmap = await dataUrlToBitmap(dataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0);
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  return sobelSharpness(data, canvas.width, canvas.height);
+}
+
+function normalizeCollectorNumber(value) {
+  return cleanText(value).split("/")[0].toUpperCase();
+}
+
+function resolveLookupConfidence(card, hints, leadScore, scoreGap) {
+  const cardNumber = cleanText(card?.number).toUpperCase();
+  const hintedNumber = normalizeCollectorNumber(hints?.number);
+  const setPrintedTotal = Number(card?.set?.printedTotal) || Number(card?.set?.total) || 0;
+  const hintedTotal = Number(cleanText(hints?.number).split("/")[1] || 0);
+  const numberMatched = !hintedNumber || !cardNumber ? false : cardNumber.toUpperCase() === hintedNumber;
+  const totalMatched = !hintedTotal || !setPrintedTotal ? false : hintedTotal === setPrintedTotal;
+
+  if (numberMatched && totalMatched && leadScore >= 125 && scoreGap >= 24) return "high";
+  if ((numberMatched || totalMatched) && leadScore >= 96) return "medium";
+  if (leadScore >= 82 && scoreGap >= 14) return "medium";
+  return "low";
+}
+
+function buildPokemonSetArchiveUrl(set) {
+  const setName = encodeURIComponent(cleanText(set?.name));
+  if (!setName) return "";
+  return `https://www.pokemon.com/us/pokemon-tcg/trading-card-expansions/?q=${setName}`;
 }
 
 function asCleanStringArray(values) {
