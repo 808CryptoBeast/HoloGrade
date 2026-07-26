@@ -137,7 +137,6 @@ const els = {
   scanStart: byId("scanStart"),
   previewWrap: byId("previewWrap"),
   previewImage: byId("previewImage"),
-  previewVideo: byId("previewVideo"),
   analyzeBtn: byId("analyzeBtn"),
   resetScanBtn: byId("resetScanBtn"),
   scanStatus: byId("scanStatus"),
@@ -224,9 +223,6 @@ const runtime = {
   stream: null,
   imageDataUrl: null,
   imageBitmap: null,
-  previewMediaUrl: null,
-  previewMediaType: "image",
-  previewMediaIsObjectUrl: false,
   viewPageByBinder: {},
   dragCardId: null,
   openBinders: {},
@@ -453,19 +449,9 @@ function wireScan() {
   els.uploadInput.addEventListener("change", async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (String(file.type || "").startsWith("video/")) {
-      const clip = await extractBestFrameFromVideo(file);
-      await setScanImage(clip.frameDataUrl, {
-        previewType: "video",
-        previewUrl: clip.previewUrl,
-        previewIsObjectUrl: true,
-      });
-      status("Video uploaded. Best frame extracted and ready to analyze.");
-    } else {
-      const dataUrl = await fileToDataUrl(file);
-      await setScanImage(dataUrl, { previewType: "image" });
-      status("Image uploaded. Ready to analyze.");
-    }
+    const dataUrl = await fileToDataUrl(file);
+    await setScanImage(dataUrl);
+    status("Image uploaded. Ready to analyze.");
     event.target.value = "";
   });
 
@@ -531,10 +517,10 @@ function captureFromVideo() {
   return canvas.toDataURL("image/jpeg", 0.9);
 }
 
-async function setScanImage(dataUrl, options = {}) {
+async function setScanImage(dataUrl) {
   runtime.imageDataUrl = dataUrl;
   runtime.imageBitmap = await dataUrlToBitmap(dataUrl);
-  setScanPreview(options.previewUrl || dataUrl, options.previewType || "image", !!options.previewIsObjectUrl);
+  els.previewImage.src = dataUrl;
   els.previewWrap.classList.remove("hidden");
   els.scanStart.classList.add("hidden");
   state.analysis = null;
@@ -554,12 +540,12 @@ async function analyzeCurrentImage() {
   const quality = estimateCondition(prepared.imageBitmap);
 
   status("Reading card text with OCR...");
-  const text = await runOcr(prepared.dataUrl, runtime.imageDataUrl);
+  const ocr = await runOcr(prepared.dataUrl, runtime.imageDataUrl);
 
   status("Matching against known card archives...");
-  const cardInfo = await identifyCard(text, prepared.hints);
+  const cardInfo = await identifyCard(ocr.text, prepared.hints, ocr.nameLine);
 
-  const analysis = buildAnalysisResult(quality, cardInfo, text);
+  const analysis = buildAnalysisResult(quality, cardInfo, ocr.text);
   state.analysis = analysis;
   renderResult(analysis);
   runtime.imageDataUrl = prepared.dataUrl;
@@ -607,7 +593,7 @@ function estimateCondition(imageBitmap) {
 }
 
 async function runOcr(dataUrl, fallbackDataUrl = "") {
-  if (!window.Tesseract) return "";
+  if (!window.Tesseract) return { text: "", nameLine: "" };
   try {
     const result = await window.Tesseract.recognize(dataUrl, "eng", {
       logger: (m) => {
@@ -623,26 +609,55 @@ async function runOcr(dataUrl, fallbackDataUrl = "") {
     const topResult = await window.Tesseract.recognize(topStrip, "eng");
 
     let fallbackResult = "";
+    let fallbackNameLine = "";
     if (fallbackDataUrl && fallbackDataUrl !== dataUrl) {
       const fallbackStrip = await makeTopStripDataUrl(fallbackDataUrl);
       const fallbackTop = await window.Tesseract.recognize(fallbackStrip, "eng");
       fallbackResult = fallbackTop?.data?.text || "";
+      fallbackNameLine = fallbackResult;
     }
 
-    return [result?.data?.text || "", topResult?.data?.text || "", fallbackResult]
+    const text = [result?.data?.text || "", topResult?.data?.text || "", fallbackResult]
       .join(" ")
       .replace(/\s+/g, " ")
       .trim();
+    const nameLine = [topResult?.data?.text || "", fallbackNameLine].filter(Boolean).join("\n");
+
+    return { text, nameLine };
   } catch {
-    return "";
+    return { text: "", nameLine: "" };
   }
 }
 
-async function identifyCard(ocrText, scanHints = {}) {
+// The top-strip OCR pass is cropped tightly around the name/HP line, so parsing
+// it directly (rather than matching a small hardcoded species list) works for
+// any Pokemon name, not just the ones in that list.
+function extractNameFromNameLine(nameLine) {
+  const raw = String(nameLine || "");
+  if (!raw.trim()) return "";
+
+  const noiseWords = new Set(["basic", "stage", "pokemon", "pokémon", "hp", "lv", "level"]);
+  const lines = raw.split(/\n/).map((line) => line.trim()).filter(Boolean);
+
+  for (const line of lines) {
+    const words = line
+      .split(/\s+/)
+      .map((w) => w.replace(/[^a-zA-Z'.-]/g, ""))
+      .filter((w) => w.length >= 2 && !noiseWords.has(w.toLowerCase()) && !/^\d+$/.test(w));
+
+    if (words.length) {
+      return words.join(" ").toLowerCase();
+    }
+  }
+
+  return "";
+}
+
+async function identifyCard(ocrText, scanHints = {}, nameLineText = "") {
   const cleaned = sanitizeOcrText(ocrText);
-  const probableName = guessPokemonName(cleaned);
+  const probableName = extractNameFromNameLine(nameLineText) || guessPokemonName(cleaned);
   const tokens = extractSearchTokens(cleaned);
-  const ocrHints = { ...extractOcrCardHints(cleaned), ...scanHints };
+  const ocrHints = { ...extractOcrCardHints(cleaned, nameLineText), ...scanHints };
   const collectorNumber = normalizeCollectorNumber(ocrHints.number);
 
   if (!probableName && !tokens.length) {
@@ -910,9 +925,9 @@ function resetScanFlow() {
   stopCamera();
   runtime.imageDataUrl = null;
   runtime.imageBitmap = null;
-  clearScanPreview();
   state.analysis = null;
 
+  els.previewImage.src = "";
   els.previewWrap.classList.add("hidden");
   els.scanStart.classList.remove("hidden");
   els.resultPanel.classList.add("hidden");
@@ -966,14 +981,18 @@ function renderCollection() {
       cards: filtered.filter((c) => c.binderId === binder.id),
       allCards: state.cards.filter((c) => c.binderId === binder.id),
     }))
-    .filter(({ binder, cards, allCards }) => cards.length > 0 || allCards.length > 0 || binderFilter === binder.id);
+    .filter(({ binder, cards }) => {
+      if (binderFilter !== "all" && binderFilter !== binder.id) return false;
+      if (filterText) return cards.length > 0;
+      return true;
+    });
 
   els.binderShelf.innerHTML = "";
 
-  if (!filtered.length) {
+  if (!binders.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent = "No cards match your current filters.";
+    empty.textContent = state.binders.length ? "No cards match your current filters." : "No binders yet.";
     els.binderShelf.appendChild(empty);
     return;
   }
@@ -1787,6 +1806,7 @@ function createScenePanelFromTemplate(template, theme = {}) {
     rowSpan: clamp(Number(template?.rowSpan) || 1, 1, 3),
     title: cleanText(template?.title) || cleanText(theme.designTitle) || "Scene Art",
     image: "",
+    video: "",
   };
   base.anchor = findNearestValidPanelAnchor(theme, null, base.anchor, base);
   return base;
@@ -1867,6 +1887,7 @@ function normalizeScenePanel(panel, index) {
     rowSpan: clamp(Number(panel.rowSpan) || 1, 1, 3),
     title: cleanText(panel.title) || "Scene Art",
     image: cleanText(panel.image),
+    video: cleanText(panel.video),
     fit: ["cover", "contain", "stretch"].includes(cleanText(panel.fit)) ? cleanText(panel.fit) : "cover",
     zoom: clamp(Number(panel.zoom) || 100, 60, 260),
     focusX: clamp(Number(panel.focusX) || 50, 0, 100),
@@ -1974,6 +1995,20 @@ function createScenePanelNode(pageTheme, panel, options = {}) {
       <strong>${escapeHtml(panel.title || pageTheme.designTitle || getPageMethodLabel(pageTheme.method))}</strong>
     </div>
   `;
+
+  if (cleanText(panel.video)) {
+    const video = document.createElement("video");
+    video.className = "panel-media-video";
+    video.src = panel.video;
+    video.autoplay = true;
+    video.loop = true;
+    video.muted = true;
+    video.playsInline = true;
+    const fit = cleanText(panel.fit) || "cover";
+    video.style.objectFit = fit === "contain" ? "contain" : fit === "stretch" ? "fill" : "cover";
+    video.style.objectPosition = `${clamp(Number(panel.focusX) || 50, 0, 100)}% ${clamp(Number(panel.focusY) || 50, 0, 100)}%`;
+    scene.insertBefore(video, scene.firstChild);
+  }
 
   if (options.mode === "collection") {
     scene.classList.add("draggable-panel");
@@ -3083,10 +3118,11 @@ function renderBinderManager() {
           </label>
         </div>
         <label>
-          Panel art
-          <input type="file" accept="image/*" data-action="panel-image" data-panel-id="${panel.id}" />
+          Panel art (photo or video)
+          <input type="file" accept="image/*,video/*" data-action="panel-image" data-panel-id="${panel.id}" />
         </label>
-        <button class="btn ghost small" type="button" data-action="panel-image-clear" data-panel-id="${panel.id}">Clear Panel Image</button>
+        ${panel.video ? '<div class="michi-lab-note muted">🎬 Video panel — plays in your binder.</div>' : ""}
+        <button class="btn ghost small" type="button" data-action="panel-image-clear" data-panel-id="${panel.id}">Clear Panel Art</button>
         <label>
           Art fit
           <select data-action="panel-fit" data-panel-id="${panel.id}">
@@ -3144,167 +3180,124 @@ function renderBinderManager() {
         <button class="btn ghost small" data-action="delete" type="button">Delete</button>
       </div>
 
-      <div class="sub-grid">
-        <label>
-          Cover title
-          <input type="text" value="${escapeAttr(coverTitle)}" data-action="cover-title" />
-        </label>
-        <label>
-          Cover subtitle
-          <input type="text" value="${escapeAttr(coverSubtitle)}" data-action="cover-subtitle" placeholder="e.g. Fire & Electric Set" />
-        </label>
-        <label>
-          Cover image
-          <input type="file" accept="image/*" data-action="cover-image" />
-        </label>
-        <label>
-          Page tint color
-          <input type="color" value="${escapeAttr(hexSafe(pageTint, "#0f1d2f"))}" data-action="page-tint" />
-        </label>
-        <label>
-          Cover color A
-          <input type="color" value="${escapeAttr(hexSafe(coverA, "#58d0ff"))}" data-action="cover-a" />
-        </label>
-        <label>
-          Cover color B
-          <input type="color" value="${escapeAttr(hexSafe(coverB, "#6effd4"))}" data-action="cover-b" />
-        </label>
-        <label>
-          Sleeve border
-          <input type="color" value="${escapeAttr(hexSafe(sleeve, "#9cdfff"))}" data-action="sleeve" />
-        </label>
-        <label>
-          Cover zoom (${coverScale}%)
-          <input type="range" min="70" max="220" step="1" value="${coverScale}" data-action="cover-scale" />
-        </label>
-        <label>
-          Cover focus X (${coverFocusX}%)
-          <input type="range" min="0" max="100" step="1" value="${coverFocusX}" data-action="cover-focus-x" />
-        </label>
-        <label>
-          Cover focus Y (${coverFocusY}%)
-          <input type="range" min="0" max="100" step="1" value="${coverFocusY}" data-action="cover-focus-y" />
-        </label>
-        <label>
-          Cover title size (${coverTitleScale}%)
-          <input type="range" min="70" max="150" step="1" value="${coverTitleScale}" data-action="cover-title-size" />
-        </label>
-        <label>
-          Card size (${clamp(Number(binder.cardScale) || 86, 65, 120)}%)
-          <input type="range" min="65" max="120" step="1" value="${clamp(Number(binder.cardScale) || 86, 65, 120)}" data-action="card-scale" />
-        </label>
-        <label>
-          Card gap (${clamp(Number(binder.cardGap) || 8, 4, 18)}px)
-          <input type="range" min="4" max="18" step="1" value="${clamp(Number(binder.cardGap) || 8, 4, 18)}" data-action="card-gap" />
-        </label>
-        <label>
-          Card art fit
-          <select data-action="card-image-fit" ${cardArtLocked ? "disabled" : ""}>
-            <option value="cover" ${cardImageFit === "cover" ? "selected" : ""}>Cover</option>
-            <option value="contain" ${cardImageFit === "contain" ? "selected" : ""}>Contain</option>
-            <option value="stretch" ${cardImageFit === "stretch" ? "selected" : ""}>Stretch</option>
-          </select>
-        </label>
-        <label>
-          Card art zoom (${cardImageZoom}%)
-          <input type="range" min="80" max="180" step="1" value="${cardImageZoom}" data-action="card-image-zoom" ${cardArtLocked ? "disabled" : ""} />
-        </label>
-        <label>
-          Card art focus X (${cardImageFocusX}%)
-          <input type="range" min="0" max="100" step="1" value="${cardImageFocusX}" data-action="card-image-focus-x" ${cardArtLocked ? "disabled" : ""} />
-        </label>
-        <label>
-          Card art focus Y (${cardImageFocusY}%)
-          <input type="range" min="0" max="100" step="1" value="${cardImageFocusY}" data-action="card-image-focus-y" ${cardArtLocked ? "disabled" : ""} />
-        </label>
-        <label class="toggle-inline">
-          Lock card art framing
-          <input type="checkbox" data-action="lock-card-frame" ${cardArtLocked ? "checked" : ""} />
-        </label>
-        <button class="btn ghost small" data-action="clear-cover" type="button">Clear Cover Image</button>
-      </div>
+      <details class="michi-section">
+        <summary>Cover Design</summary>
+        <div class="sub-grid">
+          <label>
+            Cover title
+            <input type="text" value="${escapeAttr(coverTitle)}" data-action="cover-title" />
+          </label>
+          <label>
+            Cover subtitle
+            <input type="text" value="${escapeAttr(coverSubtitle)}" data-action="cover-subtitle" placeholder="e.g. Fire & Electric Set" />
+          </label>
+          <label>
+            Cover image
+            <input type="file" accept="image/*" data-action="cover-image" />
+          </label>
+          <label>
+            Cover color A
+            <input type="color" value="${escapeAttr(hexSafe(coverA, "#58d0ff"))}" data-action="cover-a" />
+          </label>
+          <label>
+            Cover color B
+            <input type="color" value="${escapeAttr(hexSafe(coverB, "#6effd4"))}" data-action="cover-b" />
+          </label>
+          <label>
+            Cover zoom (${coverScale}%)
+            <input type="range" min="70" max="220" step="1" value="${coverScale}" data-action="cover-scale" />
+          </label>
+          <label>
+            Cover focus X (${coverFocusX}%)
+            <input type="range" min="0" max="100" step="1" value="${coverFocusX}" data-action="cover-focus-x" />
+          </label>
+          <label>
+            Cover focus Y (${coverFocusY}%)
+            <input type="range" min="0" max="100" step="1" value="${coverFocusY}" data-action="cover-focus-y" />
+          </label>
+          <label>
+            Cover title size (${coverTitleScale}%)
+            <input type="range" min="70" max="150" step="1" value="${coverTitleScale}" data-action="cover-title-size" />
+          </label>
+          <button class="btn ghost small" data-action="clear-cover" type="button">Clear Cover Image</button>
+        </div>
+        <div class="cover-preview" style="background-image:${binder.coverImage ? `linear-gradient(rgba(3,12,22,.28), rgba(3,12,22,.55)), url(${binder.coverImage})` : `linear-gradient(120deg, ${coverA}, ${coverB})`}; background-size:${binder.coverImage ? `${coverScale}%, ${coverScale}%` : "cover"}; background-position:${binder.coverImage ? `${coverFocusX}% ${coverFocusY}%, ${coverFocusX}% ${coverFocusY}%` : "center"}; --cover-title-scale:${coverTitleScale / 100};"><strong class="cover-preview-title">${escapeHtml(coverTitle)}</strong>${coverSubtitle ? `<span class="cover-preview-subtitle">${escapeHtml(coverSubtitle)}</span>` : ""}</div>
+      </details>
 
-      <div class="cover-preview" style="background-image:${binder.coverImage ? `linear-gradient(rgba(3,12,22,.28), rgba(3,12,22,.55)), url(${binder.coverImage})` : `linear-gradient(120deg, ${coverA}, ${coverB})`}; background-size:${binder.coverImage ? `${coverScale}%, ${coverScale}%` : "cover"}; background-position:${binder.coverImage ? `${coverFocusX}% ${coverFocusY}%, ${coverFocusX}% ${coverFocusY}%` : "center"}; --cover-title-scale:${coverTitleScale / 100};"><strong class="cover-preview-title">${escapeHtml(coverTitle)}</strong>${coverSubtitle ? `<span class="cover-preview-subtitle">${escapeHtml(coverSubtitle)}</span>` : ""}</div>
-      <div class="sleeve-preview" style="border-color:${sleeve}; background-color:${pageTint};"></div>
+      <details class="michi-section">
+        <summary>Binder &amp; Card Style</summary>
+        <div class="sub-grid">
+          <label>
+            Sleeve border
+            <input type="color" value="${escapeAttr(hexSafe(sleeve, "#9cdfff"))}" data-action="sleeve" />
+          </label>
+          <label>
+            Page tint color
+            <input type="color" value="${escapeAttr(hexSafe(pageTint, "#0f1d2f"))}" data-action="page-tint" />
+          </label>
+          <label>
+            Card size (${clamp(Number(binder.cardScale) || 86, 65, 120)}%)
+            <input type="range" min="65" max="120" step="1" value="${clamp(Number(binder.cardScale) || 86, 65, 120)}" data-action="card-scale" />
+          </label>
+          <label>
+            Card gap (${clamp(Number(binder.cardGap) || 8, 4, 18)}px)
+            <input type="range" min="4" max="18" step="1" value="${clamp(Number(binder.cardGap) || 8, 4, 18)}" data-action="card-gap" />
+          </label>
+          <label>
+            Card art fit
+            <select data-action="card-image-fit" ${cardArtLocked ? "disabled" : ""}>
+              <option value="cover" ${cardImageFit === "cover" ? "selected" : ""}>Cover</option>
+              <option value="contain" ${cardImageFit === "contain" ? "selected" : ""}>Contain</option>
+              <option value="stretch" ${cardImageFit === "stretch" ? "selected" : ""}>Stretch</option>
+            </select>
+          </label>
+          <label>
+            Card art zoom (${cardImageZoom}%)
+            <input type="range" min="80" max="180" step="1" value="${cardImageZoom}" data-action="card-image-zoom" ${cardArtLocked ? "disabled" : ""} />
+          </label>
+          <label>
+            Card art focus X (${cardImageFocusX}%)
+            <input type="range" min="0" max="100" step="1" value="${cardImageFocusX}" data-action="card-image-focus-x" ${cardArtLocked ? "disabled" : ""} />
+          </label>
+          <label>
+            Card art focus Y (${cardImageFocusY}%)
+            <input type="range" min="0" max="100" step="1" value="${cardImageFocusY}" data-action="card-image-focus-y" ${cardArtLocked ? "disabled" : ""} />
+          </label>
+          <label class="toggle-inline">
+            Lock card art framing
+            <input type="checkbox" data-action="lock-card-frame" ${cardArtLocked ? "checked" : ""} />
+          </label>
+        </div>
+        <div class="sleeve-preview" style="border-color:${sleeve}; background-color:${pageTint};"></div>
+      </details>
 
       <div class="michi-page-lab">
         <h5>Michi Method Page Lab</h5>
-        <div class="sub-grid">
-          <label>
-            Target page
-            <select data-action="theme-page">${pageOptions}</select>
-          </label>
-          <label>
-            Method preset
-            <select data-action="theme-method">${methodOptions}</select>
-          </label>
-          <label>
-            Page tint
-            <input type="color" value="${escapeAttr(hexSafe(customTheme.pageTint, pageTint))}" data-action="theme-tint" />
-          </label>
-          <label>
-            Sleeve tint
-            <input type="color" value="${escapeAttr(hexSafe(customTheme.sleeveColor, sleeve))}" data-action="theme-sleeve" />
-          </label>
-          <label>
-            Pattern style
-            <select data-action="theme-pattern">
-              ${Object.keys(BINDER_STYLES)
-                .map((style) => `<option value="${style}" ${style === customTheme.patternStyle ? "selected" : ""}>${titleCase(style)}</option>`)
-                .join("")}
-            </select>
-          </label>
-          <label>
-            Pattern strength (${Number(customTheme.patternStrength || 45)})
-            <input type="range" min="8" max="100" step="1" value="${Number(customTheme.patternStrength || 45)}" data-action="theme-strength" />
-          </label>
-          <label>
-            Page art image
-            <input type="file" accept="image/*" data-action="theme-image" />
-          </label>
-          <label>
-            Page art fit
-            <select data-action="theme-image-fit">
-              <option value="cover" ${pageImageFit === "cover" ? "selected" : ""}>Cover</option>
-              <option value="contain" ${pageImageFit === "contain" ? "selected" : ""}>Contain</option>
-              <option value="stretch" ${pageImageFit === "stretch" ? "selected" : ""}>Stretch</option>
-            </select>
-          </label>
-          <label>
-            Page art zoom (${pageImageZoom}%)
-            <input type="range" min="60" max="260" step="1" value="${pageImageZoom}" data-action="theme-image-zoom" />
-          </label>
-          <label>
-            Page art focus X (${pageImageFocusX}%)
-            <input type="range" min="0" max="100" step="1" value="${pageImageFocusX}" data-action="theme-image-focus-x" />
-          </label>
-          <label>
-            Page art focus Y (${pageImageFocusY}%)
-            <input type="range" min="0" max="100" step="1" value="${pageImageFocusY}" data-action="theme-image-focus-y" />
-          </label>
-          <label>
-            Design title
-            <input type="text" value="${escapeAttr(customTheme.designTitle || "")}" data-action="theme-title" placeholder="e.g. Neon Sakura" />
-          </label>
-          <label>
-            Scene panel art
-            <input type="file" accept="image/*" data-action="theme-scene-image" />
-          </label>
-        </div>
+        <label class="target-page-select">
+          Editing page
+          <select data-action="theme-page">${pageOptions}</select>
+        </label>
+        <p class="michi-lab-note muted">Scene panels, stickers, and theme below apply to this page only, unless you use "Apply This Style To All Pages".</p>
+
         <div class="michi-workbench">
           <div class="michi-workbench-preview">
             <div class="page-style-preview" style="${buildPagePreviewStyle(customTheme)}">
               <span>${escapeHtml(customTheme.designTitle || `${getPageMethodLabel(customTheme.method)} Page ${customPage}`)}</span>
             </div>
             <div class="michi-lab-note muted">Live preview: drag and resize panels here. This stays visible while you edit.</div>
-            <div class="panel-template-actions">${panelButtons}</div>
             <div class="panel-layout-editor" data-binder-id="${binder.id}" data-page="${customPage}"></div>
           </div>
 
           <div class="michi-workbench-controls">
             <details class="michi-section" open>
               <summary>Scene Panels</summary>
-              <div class="panel-config-list">${panelCards || '<p class="muted">No scene panels yet. Add one and drag it on the preview grid.</p>'}</div>
+              <label>
+                Add panels from photos or videos
+                <input type="file" accept="image/*,video/*" multiple data-action="panel-bulk-add" />
+              </label>
+              <div class="michi-lab-note muted">Pick multiple files at once to create one panel per file. Video panels play right in your binder.</div>
+              <div class="panel-template-actions">${panelButtons}</div>
+              <div class="panel-config-list">${panelCards || '<p class="muted">No scene panels yet. Add one above or drag it on the preview grid.</p>'}</div>
             </details>
 
             <details class="michi-section" open>
@@ -3323,7 +3316,65 @@ function renderBinderManager() {
               </div>
             </details>
 
-            <details class="michi-section" open>
+            <details class="michi-section">
+              <summary>Page Theme &amp; Art</summary>
+              <div class="sub-grid">
+                <label>
+                  Method preset
+                  <select data-action="theme-method">${methodOptions}</select>
+                </label>
+                <label>
+                  Page tint
+                  <input type="color" value="${escapeAttr(hexSafe(customTheme.pageTint, pageTint))}" data-action="theme-tint" />
+                </label>
+                <label>
+                  Sleeve tint
+                  <input type="color" value="${escapeAttr(hexSafe(customTheme.sleeveColor, sleeve))}" data-action="theme-sleeve" />
+                </label>
+                <label>
+                  Pattern style
+                  <select data-action="theme-pattern">
+                    ${Object.keys(BINDER_STYLES)
+                      .map((style) => `<option value="${style}" ${style === customTheme.patternStyle ? "selected" : ""}>${titleCase(style)}</option>`)
+                      .join("")}
+                  </select>
+                </label>
+                <label>
+                  Pattern strength (${Number(customTheme.patternStrength || 45)})
+                  <input type="range" min="8" max="100" step="1" value="${Number(customTheme.patternStrength || 45)}" data-action="theme-strength" />
+                </label>
+                <label>
+                  Page art image
+                  <input type="file" accept="image/*" data-action="theme-image" />
+                </label>
+                <label>
+                  Page art fit
+                  <select data-action="theme-image-fit">
+                    <option value="cover" ${pageImageFit === "cover" ? "selected" : ""}>Cover</option>
+                    <option value="contain" ${pageImageFit === "contain" ? "selected" : ""}>Contain</option>
+                    <option value="stretch" ${pageImageFit === "stretch" ? "selected" : ""}>Stretch</option>
+                  </select>
+                </label>
+                <label>
+                  Page art zoom (${pageImageZoom}%)
+                  <input type="range" min="60" max="260" step="1" value="${pageImageZoom}" data-action="theme-image-zoom" />
+                </label>
+                <label>
+                  Page art focus X (${pageImageFocusX}%)
+                  <input type="range" min="0" max="100" step="1" value="${pageImageFocusX}" data-action="theme-image-focus-x" />
+                </label>
+                <label>
+                  Page art focus Y (${pageImageFocusY}%)
+                  <input type="range" min="0" max="100" step="1" value="${pageImageFocusY}" data-action="theme-image-focus-y" />
+                </label>
+                <label>
+                  Design title
+                  <input type="text" value="${escapeAttr(customTheme.designTitle || "")}" data-action="theme-title" placeholder="e.g. Neon Sakura" />
+                </label>
+              </div>
+            </details>
+
+            <details class="michi-section">
               <summary>Quick Actions</summary>
               <div class="page-style-actions">
                 <button class="btn ghost small" data-action="theme-clear-stickers" type="button">Clear Stickers</button>
@@ -3370,7 +3421,7 @@ function renderBinderManager() {
     const themeImageFocusXInput = wrap.querySelector('input[data-action="theme-image-focus-x"]');
     const themeImageFocusYInput = wrap.querySelector('input[data-action="theme-image-focus-y"]');
     const themeTitleInput = wrap.querySelector('input[data-action="theme-title"]');
-    const themeSceneImageInput = wrap.querySelector('input[data-action="theme-scene-image"]');
+    const panelBulkAddInput = wrap.querySelector('input[data-action="panel-bulk-add"]');
     const themeClearImageBtn = wrap.querySelector('button[data-action="theme-clear-image"]');
     const themeStickerSizeInput = wrap.querySelector('input[data-action="theme-sticker-size"]');
     const themeStickerColorInput = wrap.querySelector('input[data-action="theme-sticker-color"]');
@@ -3672,21 +3723,43 @@ function renderBinderManager() {
       renderBinderManager();
     });
 
-    themeSceneImageInput.addEventListener("change", async () => {
-      const file = themeSceneImageInput.files?.[0];
-      if (!file) return;
+    panelBulkAddInput.addEventListener("change", async () => {
+      const files = Array.from(panelBulkAddInput.files || []);
+      if (!files.length) return;
+
       const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
       const theme = upsertPageTheme(binder, page);
-      const firstPanel = theme.scenePanels[0];
-      if (!firstPanel) {
-        status("Add a scene panel first, then upload panel art.");
-        return;
+
+      let added = 0;
+      const failures = [];
+
+      for (const file of files) {
+        if (getReservedSlotsForTheme(theme).size >= 9) {
+          failures.push(`"${file.name}" skipped (page is full).`);
+          continue;
+        }
+        try {
+          const media = await readPanelMediaFile(file);
+          const panel = createScenePanelFromTemplate(SCENE_PANEL_TEMPLATES.square, theme);
+          panel.image = media.image;
+          panel.video = media.video;
+          theme.scenePanels = [...theme.scenePanels, panel];
+          added += 1;
+        } catch (error) {
+          failures.push(error.message || `"${file.name}" could not be added.`);
+        }
       }
-      firstPanel.image = await resizeImageFile(file, 1600, 0.84);
+
+      rebalancePageForLayout(binder.id, page);
       persist();
       renderCollection();
       renderBinderManager();
-      status(`Updated scene panel art for ${binder.name} page ${page}.`);
+
+      const parts = [];
+      if (added) parts.push(`Added ${added} scene panel${added === 1 ? "" : "s"} to ${binder.name} page ${page}.`);
+      if (failures.length) parts.push(failures.join(" "));
+      status(parts.join(" ") || "No panels added.");
+      panelBulkAddInput.value = "";
     });
 
     themeTitleInput.addEventListener("change", () => {
@@ -3802,11 +3875,17 @@ function renderBinderManager() {
         if (!file) return;
         const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
         const theme = upsertPageTheme(binder, page);
-        const image = await resizeImageFile(file, 1600, 0.84);
-        theme.scenePanels = theme.scenePanels.map((panel) => panel.id === input.dataset.panelId ? { ...panel, image } : panel);
-        persist();
-        renderCollection();
-        renderBinderManager();
+        try {
+          const media = await readPanelMediaFile(file);
+          theme.scenePanels = theme.scenePanels.map((panel) => panel.id === input.dataset.panelId
+            ? { ...panel, image: media.image, video: media.video }
+            : panel);
+          persist();
+          renderCollection();
+          renderBinderManager();
+        } catch (error) {
+          status(error.message || "Could not add that file.");
+        }
       });
     });
 
@@ -3815,6 +3894,7 @@ function renderBinderManager() {
         mutateScenePanel(binder, maxPages, themePageSelect, button.dataset.panelId, (panel) => ({
           ...panel,
           image: "",
+          video: "",
         }));
       });
     });
@@ -4066,7 +4146,11 @@ function persist() {
     newsFetchedAt: state.newsFetchedAt,
   };
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    status("Could not save — your browser's storage is full. Try removing a large video panel or image.");
+  }
 }
 
 function normalizePagingState() {
@@ -4555,9 +4639,9 @@ function extractAutoCardData(card) {
   };
 }
 
-function extractOcrCardHints(ocrText) {
+function extractOcrCardHints(ocrText, nameLineText = "") {
   const text = String(ocrText || "");
-  const probableName = guessPokemonName(text);
+  const probableName = extractNameFromNameLine(nameLineText) || guessPokemonName(text);
   const numberMatch = text.match(/\b([a-z]{0,3}\d{1,3})\s*\/\s*(\d{1,3})\b/i);
   const looseNumber = text.match(/\b([a-z]{0,3}\d{1,3})\b/i)?.[1] || "";
   const hp = text.match(/\b(\d{2,3})\s*hp\b/i)?.[1] || "";
@@ -4594,40 +4678,6 @@ async function optimizeCameraTrack(track) {
   } catch {
     // Best-effort only; unsupported camera controls should not block scanning.
   }
-}
-
-function setScanPreview(url, mediaType, isObjectUrl = false) {
-  clearScanPreview();
-  runtime.previewMediaUrl = url;
-  runtime.previewMediaType = mediaType === "video" ? "video" : "image";
-  runtime.previewMediaIsObjectUrl = !!isObjectUrl;
-
-  if (runtime.previewMediaType === "video") {
-    els.previewVideo.src = url;
-    els.previewVideo.classList.remove("hidden");
-    els.previewImage.classList.add("hidden");
-    els.previewImage.src = "";
-  } else {
-    els.previewImage.src = url;
-    els.previewImage.classList.remove("hidden");
-    els.previewVideo.classList.add("hidden");
-    els.previewVideo.removeAttribute("src");
-    els.previewVideo.load();
-  }
-}
-
-function clearScanPreview() {
-  if (runtime.previewMediaIsObjectUrl && runtime.previewMediaUrl) {
-    URL.revokeObjectURL(runtime.previewMediaUrl);
-  }
-  runtime.previewMediaUrl = null;
-  runtime.previewMediaType = "image";
-  runtime.previewMediaIsObjectUrl = false;
-  els.previewImage.src = "";
-  els.previewImage.classList.remove("hidden");
-  els.previewVideo.classList.add("hidden");
-  els.previewVideo.removeAttribute("src");
-  els.previewVideo.load();
 }
 
 async function dataUrlToBitmap(dataUrl) {
@@ -4782,39 +4832,6 @@ function average(values) {
   return values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length;
 }
 
-async function extractBestFrameFromVideo(file) {
-  const previewUrl = URL.createObjectURL(file);
-  const video = document.createElement("video");
-  video.preload = "metadata";
-  video.muted = true;
-  video.playsInline = true;
-  video.src = previewUrl;
-
-  await waitForVideoEvent(video, "loadedmetadata");
-
-  const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
-  const checkpoints = [0.08, 0.22, 0.4, 0.6, 0.82]
-    .map((ratio) => Math.min(duration - 0.05, Math.max(0, duration * ratio)))
-    .filter((time, index, list) => time >= 0 && list.indexOf(time) === index);
-
-  let bestFrame = null;
-  let bestScore = -Infinity;
-
-  for (const time of checkpoints) {
-    const frameDataUrl = await captureVideoFrame(video, time);
-    const score = await scoreFrameClarity(frameDataUrl);
-    if (score > bestScore) {
-      bestScore = score;
-      bestFrame = frameDataUrl;
-    }
-  }
-
-  return {
-    frameDataUrl: bestFrame || await captureVideoFrame(video, 0),
-    previewUrl,
-  };
-}
-
 function waitForVideoEvent(video, eventName) {
   return new Promise((resolve, reject) => {
     const onDone = () => {
@@ -4848,15 +4865,35 @@ async function captureVideoFrame(video, time) {
   return canvas.toDataURL("image/jpeg", 0.9);
 }
 
-async function scoreFrameClarity(dataUrl) {
-  const bitmap = await dataUrlToBitmap(dataUrl);
-  const canvas = document.createElement("canvas");
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(bitmap, 0, 0);
-  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-  return sobelSharpness(data, canvas.width, canvas.height);
+const MAX_PANEL_VIDEO_BYTES = 12 * 1024 * 1024;
+
+// Reads an image or video file for scene/page art. Videos are kept as-is (no
+// re-encode) but capped in size since everything persists to localStorage;
+// a poster frame is always captured so non-video render paths (editor grid,
+// thumbnails) have something to show without needing to decode video.
+async function readPanelMediaFile(file) {
+  const isVideo = String(file.type || "").startsWith("video/");
+  if (!isVideo) {
+    return { image: await resizeImageFile(file, 1600, 0.84), video: "" };
+  }
+  if (file.size > MAX_PANEL_VIDEO_BYTES) {
+    const limitMb = Math.round(MAX_PANEL_VIDEO_BYTES / 1024 / 1024);
+    throw new Error(`"${file.name}" is too large for a video panel (limit ${limitMb}MB).`);
+  }
+  const videoUrl = await fileToDataUrl(file);
+  const poster = await capturePosterFrame(videoUrl);
+  return { image: poster, video: videoUrl };
+}
+
+async function capturePosterFrame(videoDataUrl) {
+  const video = document.createElement("video");
+  video.preload = "metadata";
+  video.muted = true;
+  video.playsInline = true;
+  video.src = videoDataUrl;
+  await waitForVideoEvent(video, "loadedmetadata");
+  const posterTime = Math.min(0.15, (Number(video.duration) || 1) * 0.1);
+  return captureVideoFrame(video, posterTime);
 }
 
 function normalizeCollectorNumber(value) {
