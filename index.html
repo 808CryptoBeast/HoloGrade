@@ -90,13 +90,14 @@
               <h3 id="resultName">Unknown Card</h3>
               <p id="resultMeta" class="muted">No card details yet</p>
             </div>
-            <div class="grade-pill">
+            <div class="grade-pill" title="Estimated from your photo's visible centering, corners, edges, and surface. Not a substitute for professional grading.">
               <span>EST</span>
               <strong id="resultGrade">-</strong>
             </div>
           </div>
 
           <div class="score-list" id="scoreList"></div>
+          <p class="muted small-caption">Condition is estimated from your photo, not verified by a grading service.</p>
 
           <div id="analysisValues" class="summary compact-summary"></div>
 
@@ -150,6 +151,7 @@
             <h3>Portfolio Snapshot</h3>
             <div class="toolbar-actions">
               <button id="recalcPricesBtn" class="btn ghost small" type="button">Recalculate Prices</button>
+              <span id="pricesUpdatedLabel" class="badge">Not priced yet</span>
               <button id="exportDataBtn" class="btn ghost small" type="button">Export Backup</button>
               <label class="btn ghost small" for="importDataInput">Import Backup</label>
               <input id="importDataInput" type="file" accept="application/json" hidden />
@@ -272,7 +274,18 @@
       </div>
       <div class="card-detail-body">
         <div class="card-detail-hero">
-          <img id="cardDetailImage" alt="Card image" />
+          <button id="cardDetailFlip" class="card-flip" type="button" title="Tap to flip">
+            <span class="card-flip-inner">
+              <span class="card-face card-face-front">
+                <img id="cardDetailImage" alt="Card image" />
+              </span>
+              <span class="card-face card-face-back">
+                <span class="card-face-back-mark"></span>
+                <strong id="cardDetailBackName">Card</strong>
+                <span class="muted small-caption">Tap to flip back</span>
+              </span>
+            </span>
+          </button>
           <div class="card-detail-headline">
             <h3 id="cardDetailName">Unknown Card</h3>
             <p id="cardDetailMeta" class="muted">Set · Number · Rarity</p>
@@ -317,6 +330,12 @@
   </template>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="app.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/app-shell.js"></script>
+  <script src="js/scan.js"></script>
+  <script src="js/pricing.js"></script>
+  <script src="js/binder.js"></script>
+  <script src="js/customize.js"></script>
+  <script src="js/persist.js"></script>
 </body>
 </html>

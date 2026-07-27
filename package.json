@@ -1,0 +1,11 @@
+{
+  "name": "holograde",
+  "private": true,
+  "description": "Dev tooling only (smoke tests). The app itself is plain static HTML/CSS/JS — see README.md to run it.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}

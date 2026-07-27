@@ -134,6 +134,19 @@ main {
   color: var(--muted);
 }
 
+.small-caption {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.value-estimated {
+  opacity: 0.82;
+}
+
+.value-estimated span {
+  border-bottom: 1px dashed currentColor;
+}
+
 .btn {
   border: 1px solid transparent;
   border-radius: 10px;
@@ -871,6 +884,14 @@ select {
   font-size: 12px;
 }
 
+.slot.empty-hint {
+  color: var(--accent, #6effd4);
+  font-size: 11px;
+  text-align: center;
+  padding: 6px;
+  line-height: 1.3;
+}
+
 .page-scene-panel {
   position: relative;
   border-radius: 14px;
@@ -972,6 +993,24 @@ select {
 .portfolio-highlights p {
   margin: 0;
   color: var(--muted);
+}
+
+.onboarding-checklist {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.onboarding-checklist li {
+  color: var(--text);
+}
+
+.onboarding-checklist li.done {
+  color: var(--muted);
+  text-decoration: line-through;
 }
 
 .binder-breakdown {
@@ -1597,6 +1636,78 @@ select {
 
 .card-detail-headline p {
   margin-top: 0;
+}
+
+.card-flip {
+  display: block;
+  width: 100%;
+  aspect-ratio: 2.5 / 3.5;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  perspective: 1200px;
+}
+
+.card-flip-inner {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.6s cubic-bezier(0.4, 0.2, 0.2, 1);
+  transform-style: preserve-3d;
+}
+
+.card-flip.flipped .card-flip-inner {
+  transform: rotateY(180deg);
+}
+
+.card-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.card-detail-hero .card-face-front img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: 0;
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.card-face-back {
+  transform: rotateY(180deg);
+  background:
+    radial-gradient(circle at 30% 20%, rgba(110, 255, 212, 0.18), transparent 55%),
+    linear-gradient(145deg, rgba(8, 17, 28, 0.98), rgba(4, 10, 18, 0.98));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  padding: 12px;
+}
+
+.card-face-back-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 3px solid var(--accent);
+  position: relative;
+}
+
+.card-face-back-mark::after {
+  content: "";
+  position: absolute;
+  inset: 38%;
+  background: var(--accent);
+  border-radius: 50%;
 }
 
 .sleeve-preview {
