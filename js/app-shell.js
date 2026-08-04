@@ -142,48 +142,37 @@ function renderPortfolio() {
   els.profileFavorite.value = state.profile.favorite || "";
   els.profileBio.value = state.profile.bio || "";
 
+  // Pricing (raw/graded value totals, P/L) is paused for now — see
+  // analysisValues in scan.js — so the snapshot leads with collection and
+  // condition stats instead of dollar totals.
   const total = state.cards.length;
   const avgGrade = total ? state.cards.reduce((sum, c) => sum + (Number(c.grade) || 0), 0) / total : 0;
-  const invested = state.cards.filter((c) => c.purchasePrice != null);
-  const spent = invested.reduce((sum, c) => sum + Number(c.purchasePrice || 0), 0);
-  const rawTotal = state.cards.reduce((sum, c) => sum + Number(c.rawValue || 0), 0);
-  const gradedTotal = state.cards.reduce((sum, c) => sum + getEstimatedGradedValue(c), 0);
-  const totalPL = invested.reduce((sum, c) => sum + (Number(c.rawValue || 0) - Number(c.purchasePrice || 0)), 0);
   const topCard = [...state.cards].sort((a, b) => (Number(b.grade) || 0) - (Number(a.grade) || 0))[0];
 
   els.portfolioStats.innerHTML = `
     <div><span>Collector</span><strong>${escapeHtml(state.profile.name || "Collector")}</strong></div>
     <div><span>Total Cards</span><strong>${total}</strong></div>
     <div><span>Avg Grade</span><strong>${total ? avgGrade.toFixed(2) : "-"}</strong></div>
-    <div><span>Raw Total</span><strong>${money(rawTotal)}</strong></div>
-    <div><span>Graded Total</span><strong>${money(gradedTotal)}</strong></div>
-    <div><span>P / L</span><strong>${invested.length ? money(totalPL) : "-"}</strong></div>
+    <div><span>Binders</span><strong>${state.binders.length}</strong></div>
   `;
 
   const notes = [
     state.profile.favorite ? `Favorite Pokemon: ${state.profile.favorite}` : "Set your favorite Pokemon in your profile.",
     state.profile.bio ? state.profile.bio : "Add a short collector bio.",
     topCard ? `Top graded card: ${topCard.name} (EST ${Number(topCard.grade).toFixed(1)})` : "Scan a card to build portfolio highlights.",
-    invested.length ? `Tracked spend: $${spent.toFixed(2)} · current raw P/L ${money(totalPL)}` : "Add purchase prices to track investment.",
   ];
 
   els.portfolioHighlights.innerHTML = `<p>${notes.map((n) => escapeHtml(n)).join("<br />")}</p>`;
 
-  const breakdown = state.binders.map((binder) => {
-    const cards = state.cards.filter((c) => c.binderId === binder.id);
-    const binderRaw = cards.reduce((sum, c) => sum + Number(c.rawValue || 0), 0);
-    const binderGraded = cards.reduce((sum, c) => sum + getEstimatedGradedValue(c), 0);
-    const binderPL = cards
-      .filter((c) => c.purchasePrice != null)
-      .reduce((sum, c) => sum + (Number(c.rawValue || 0) - Number(c.purchasePrice || 0)), 0);
-    return { binder, count: cards.length, binderRaw, binderGraded, binderPL };
-  });
+  const breakdown = state.binders.map((binder) => ({
+    binder,
+    count: state.cards.filter((c) => c.binderId === binder.id).length,
+  }));
 
-  els.portfolioBinderBreakdown.innerHTML = breakdown.map(({ binder, count, binderRaw, binderGraded, binderPL }) => `
+  els.portfolioBinderBreakdown.innerHTML = breakdown.map(({ binder, count }) => `
     <div class="binder-breakdown-item">
       <strong>${escapeHtml(binder.coverTitle || binder.name)}</strong>
-      <p>${count} cards · Raw ${money(binderRaw)} · Graded ${money(binderGraded)} · P/L ${money(binderPL)}</p>
-      <div class="binder-chart-wrap">${renderSparklineSvg(getBinderHistorySeries(binder.id), money(binderRaw))}</div>
+      <p>${count} card${count === 1 ? "" : "s"}</p>
     </div>
   `).join("");
 }
@@ -203,17 +192,19 @@ function renderDashboard() {
   const topBinder = state.binders
     .map((binder) => ({
       binder,
-      raw: state.cards.filter((c) => c.binderId === binder.id).reduce((sum, c) => sum + Number(c.rawValue || 0), 0),
       count: state.cards.filter((c) => c.binderId === binder.id).length,
     }))
-    .sort((a, b) => b.raw - a.raw)[0];
-  const rawTotal = state.cards.reduce((sum, c) => sum + Number(c.rawValue || 0), 0);
-  const gradedTotal = state.cards.reduce((sum, c) => sum + getEstimatedGradedValue(c), 0);
+    .sort((a, b) => b.count - a.count)[0];
+  // Pricing is paused for now (see analysisValues in scan.js), so the
+  // dashboard leads with collection/condition stats instead of dollar totals.
+  const avgGrade = state.cards.length
+    ? state.cards.reduce((sum, c) => sum + (Number(c.grade) || 0), 0) / state.cards.length
+    : 0;
 
   els.dashboardSummary.innerHTML = `
     <div><span>Total Cards</span><strong>${state.cards.length}</strong></div>
-    <div><span>Raw Value</span><strong>${money(rawTotal)}</strong></div>
-    <div><span>Graded Value</span><strong>${money(gradedTotal)}</strong></div>
+    <div><span>Binders</span><strong>${state.binders.length}</strong></div>
+    <div><span>Avg Grade</span><strong>${state.cards.length ? avgGrade.toFixed(2) : "-"}</strong></div>
   `;
 
   const hasBinder = state.binders.length > 0;
@@ -233,7 +224,7 @@ function renderDashboard() {
 
   const spotlightLines = [
     latest ? `Latest add: ${latest.name} into ${getBinderLabel(latest.binderId)} on page ${latest.page || 1}.` : "Scan your first card to start the collection.",
-    topBinder && topBinder.count ? `Top binder: ${topBinder.binder.coverTitle || topBinder.binder.name} with ${topBinder.count} cards and ${money(topBinder.raw)} raw value.` : "Create binders to organize your collection.",
+    topBinder && topBinder.count ? `Top binder: ${topBinder.binder.coverTitle || topBinder.binder.name} with ${topBinder.count} cards.` : "Create binders to organize your collection.",
     state.news.length ? `Latest headline: ${state.news[0].title}` : "News feed will show recent Pokemon TCG headlines here.",
   ];
   els.dashboardSpotlight.innerHTML = `${onboardingHtml}<p>${spotlightLines.map((line) => escapeHtml(line)).join("<br />")}</p>`;
@@ -354,11 +345,10 @@ function openCardDetailModal(card, context = {}) {
   els.cardDetailName.textContent = card.name || "Unknown Card";
   els.cardDetailMeta.textContent = [card.set, card.number && `#${card.number}`, card.rarity].filter(Boolean).join(" · ") || "Card metadata pending";
 
+  // Pricing display is paused for now (see analysisValues in scan.js) —
+  // rawValue/psa9Value/psa10Value are still stored on the card, just not shown.
   els.cardDetailGradeRow.innerHTML = `
     <div title="${CONDITION_ESTIMATE_TOOLTIP}"><span>Grade (est.)</span><strong>${Number(card.grade || 0).toFixed(1)}</strong></div>
-    <div title="From live TCGplayer/Cardmarket pricing for this card"><span>Raw (market)</span><strong>${money(card.rawValue || 0)}</strong></div>
-    <div class="value-estimated" title="${PSA_ESTIMATE_TOOLTIP}"><span>PSA 9 (rough est.)</span><strong>${money(card.psa9Value || 0)}</strong></div>
-    <div class="value-estimated" title="${PSA_ESTIMATE_TOOLTIP}"><span>PSA 10 (rough est.)</span><strong>${money(card.psa10Value || 0)}</strong></div>
   `;
 
   renderAutoInfoGrid(els.cardDetailFields, card, {

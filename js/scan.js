@@ -8,6 +8,8 @@ function wireScan() {
     status("Camera closed.");
   });
 
+  els.switchCameraBtn.addEventListener("click", switchCamera);
+
   els.captureBtn.addEventListener("click", async () => {
     const shot = captureFromVideo();
     if (!shot) {
@@ -32,21 +34,60 @@ function wireScan() {
   els.resetScanBtn.addEventListener("click", resetScanFlow);
   els.scanAnotherBtn.addEventListener("click", resetScanFlow);
   els.saveCardBtn.addEventListener("click", saveAnalyzedCard);
+  els.manualSearchBtn.addEventListener("click", runManualSearch);
 }
 
-async function openCamera() {
-  if (!window.isSecureContext) {
-    status("Camera requires a secure page (HTTPS or localhost). Upload photo or run with a local server.");
+// Standalone fallback for when OCR can't get a usable read (or the user just
+// wants to look a card up directly): reuses identifyCard's own query/scoring
+// pipeline via scanHints, and the same buildAnalysisResult/renderResult/save
+// flow as an OCR-driven scan. Works with or without a photo already loaded.
+async function runManualSearch() {
+  const name = cleanText(els.manualSearchName.value);
+  const number = cleanText(els.manualSearchNumber.value);
+  const set = cleanText(els.manualSearchSet.value);
+
+  if (!name && !number) {
+    status("Enter at least a card name or number to search.");
     return;
   }
 
-  if (!navigator.mediaDevices?.getUserMedia) {
-    status("Camera is not supported on this browser. Use upload instead.");
+  if (runtime.scanBusy) {
+    status("Still working on the previous request — please wait.");
     return;
   }
+
+  runtime.scanBusy = true;
+  els.manualSearchBtn.disabled = true;
+  status("Searching card archives...");
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
+    const cardInfo = await identifyCard("", { name, number, set, rarity: "" }, "", number);
+    const quality = runtime.imageBitmap
+      ? estimateCondition(runtime.imageBitmap)
+      : { centering: 0, corners: 0, edges: 0, surface: 0, grade: 0 };
+    const analysis = buildAnalysisResult(quality, cardInfo, "");
+    state.analysis = analysis;
+    renderResult(analysis);
+    els.resultPanel.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    status(cardInfo.found
+      ? `Found ${analysis.name}. Review and save when ready.`
+      : "No confident match found for that search. Try different terms, or edit the fields below directly.");
+  } finally {
+    runtime.scanBusy = false;
+    els.manualSearchBtn.disabled = false;
+  }
+}
+
+// Tried in order, most-specific first. Some devices/browsers reject the
+// `advanced` capability constraints or a specific facingMode/resolution
+// combination (OverconstrainedError) — falling back to plainer constraints
+// turns a hard failure into a working, just-less-optimized camera.
+function buildCameraConstraints(deviceId) {
+  if (deviceId) {
+    return [{ video: { deviceId: { exact: deviceId } }, audio: false }];
+  }
+  return [
+    {
       video: {
         facingMode: { ideal: "environment" },
         width: { ideal: 1920 },
@@ -58,16 +99,80 @@ async function openCamera() {
         ],
       },
       audio: false,
-    });
+    },
+    { video: { facingMode: { ideal: "environment" } }, audio: false },
+    { video: true, audio: false },
+  ];
+}
+
+async function requestCameraStream(deviceId) {
+  const attempts = buildCameraConstraints(deviceId);
+  let lastError = null;
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (error) {
+      lastError = error;
+      console.warn("getUserMedia attempt failed, trying next fallback:", error);
+    }
+  }
+  throw lastError || new Error("Could not open camera");
+}
+
+async function openCamera(deviceId) {
+  if (!window.isSecureContext) {
+    status("Camera requires a secure page (HTTPS or localhost). Upload photo or run with a local server.");
+    return;
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    status("Camera is not supported on this browser. Use upload instead.");
+    return;
+  }
+
+  try {
+    const stream = await requestCameraStream(deviceId);
 
     runtime.stream = stream;
     await optimizeCameraTrack(stream.getVideoTracks()[0]);
     els.cameraVideo.srcObject = stream;
     els.cameraBox.classList.remove("hidden");
+    runtime.scanState = "camera-active";
     status("Camera ready. Place the full card inside the guide for auto-crop.");
+
+    await refreshCameraDeviceList();
   } catch (error) {
-    status("Camera permission denied or unavailable. Use upload photo.");
+    console.error("Camera open failed:", error);
+    const message = error?.name === "NotAllowedError"
+      ? "Camera permission was denied. Allow camera access in your browser settings, or upload a photo instead."
+      : error?.name === "NotFoundError"
+        ? "No camera was found on this device. Use upload photo instead."
+        : "Camera unavailable right now. Use upload photo instead.";
+    status(message);
   }
+}
+
+// Populates runtime.videoDevices and reveals the Switch Camera button when
+// more than one camera is available. Device labels are only populated after
+// permission has been granted, so this runs after a successful open.
+async function refreshCameraDeviceList() {
+  if (!navigator.mediaDevices?.enumerateDevices || !els.switchCameraBtn) return;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    runtime.videoDevices = devices.filter((device) => device.kind === "videoinput");
+    els.switchCameraBtn.classList.toggle("hidden", runtime.videoDevices.length < 2);
+  } catch (error) {
+    console.warn("Could not enumerate camera devices:", error);
+  }
+}
+
+async function switchCamera() {
+  if (runtime.videoDevices.length < 2) return;
+  runtime.videoDeviceIndex = (runtime.videoDeviceIndex + 1) % runtime.videoDevices.length;
+  const nextDevice = runtime.videoDevices[runtime.videoDeviceIndex];
+  stopCamera();
+  status("Switching camera...");
+  await openCamera(nextDevice?.deviceId);
 }
 
 function stopCamera() {
@@ -76,6 +181,9 @@ function stopCamera() {
     runtime.stream = null;
   }
   els.cameraBox.classList.add("hidden");
+  if (runtime.scanState === "camera-active") {
+    runtime.scanState = "idle";
+  }
 }
 
 function captureFromVideo() {
@@ -97,6 +205,7 @@ async function setScanImage(dataUrl) {
   els.previewWrap.classList.remove("hidden");
   els.scanStart.classList.add("hidden");
   state.analysis = null;
+  runtime.scanState = "image-ready";
   renderResult(null);
 }
 
@@ -105,27 +214,50 @@ async function analyzeCurrentImage() {
     status("Add a card image first.");
     return;
   }
+  if (runtime.scanBusy) {
+    status("Still analyzing the previous photo — please wait.");
+    return;
+  }
 
-  status("Detecting card edges and preparing scan...");
-  const prepared = await prepareScanForAnalysis(runtime.imageDataUrl);
+  runtime.scanBusy = true;
+  runtime.scanState = "analyzing";
+  els.analyzeBtn.disabled = true;
 
-  status("Analyzing card condition...");
-  const quality = estimateCondition(prepared.imageBitmap);
+  try {
+    status("Detecting card edges and preparing scan...");
+    const prepared = await prepareScanForAnalysis(runtime.imageDataUrl);
 
-  status("Reading card text with OCR...");
-  const ocr = await runOcr(prepared.dataUrl, runtime.imageDataUrl);
+    status("Analyzing card condition...");
+    const quality = estimateCondition(prepared.imageBitmap);
+    const qualityWarnings = assessImageQuality(prepared.imageBitmap, quality, prepared.cropDetected);
 
-  status("Matching against known card archives...");
-  const cardInfo = await identifyCard(ocr.text, prepared.hints, ocr.nameLine);
+    status("Reading card text with OCR...");
+    const ocr = await runOcr(prepared.dataUrl, runtime.imageDataUrl);
 
-  const analysis = buildAnalysisResult(quality, cardInfo, ocr.text);
-  state.analysis = analysis;
-  renderResult(analysis);
-  runtime.imageDataUrl = prepared.dataUrl;
-  runtime.imageBitmap = prepared.imageBitmap;
-  const cropNote = prepared.cropDetected ? "Auto-crop locked onto the card." : "Auto-crop could not fully lock, so the original frame was used.";
-  const apiNote = cardInfo.apiError ? " Card archive was unreliable during lookup, so this match may be incomplete — try Analyze again." : "";
-  status(`Analysis complete. ${cropNote}${apiNote} Confidence: ${analysis.confidence}. Review before saving.`);
+    status("Matching against known card archives...");
+    const cardInfo = await identifyCard(ocr.text, prepared.hints, ocr.nameLine, ocr.numberLine);
+
+    const analysis = buildAnalysisResult(quality, cardInfo, ocr.text);
+    state.analysis = analysis;
+    renderResult(analysis);
+    runtime.imageDataUrl = prepared.dataUrl;
+    runtime.imageBitmap = prepared.imageBitmap;
+    runtime.scanState = "result";
+
+    const cropNote = prepared.cropDetected ? "Auto-crop locked onto the card." : "Auto-crop could not fully lock, so the original frame was used.";
+    const apiNote = cardInfo.apiError ? " Card archive was unreliable during lookup, so this match may be incomplete — try Analyze again." : "";
+    const qualityNote = qualityWarnings.length
+      ? ` Heads up: ${qualityWarnings.join(", ")} — you can still save, but consider retaking for a more accurate result.`
+      : "";
+    status(`Analysis complete. ${cropNote}${apiNote}${qualityNote} Confidence: ${analysis.confidence}. Review before saving.`);
+  } catch (error) {
+    console.error("Analyze failed:", error);
+    runtime.scanState = "error";
+    status("Something went wrong analyzing this photo. Try again, or use manual search below.");
+  } finally {
+    runtime.scanBusy = false;
+    els.analyzeBtn.disabled = false;
+  }
 }
 
 function estimateCondition(imageBitmap) {
@@ -164,11 +296,46 @@ function estimateCondition(imageBitmap) {
     edges: round1(edgesScore),
     surface: round1(surfaceScore),
     grade: round1(clamp(weighted, 4.5, 10)),
+    // Raw signals (not shown as subgrades) reused by assessImageQuality()
+    // for pre-flight blur/brightness warnings.
+    sharpness,
+    brightness: averageLuminance(centerBox),
   };
 }
 
+function averageLuminance(values) {
+  if (!values.length) return 0;
+  let sum = 0;
+  for (let i = 0; i < values.length; i += 1) sum += values[i];
+  return sum / values.length;
+}
+
+// Non-blocking pre-flight checks: these only ever add a warning to the status
+// line, they never stop analysis from running. Thresholds are intentionally
+// conservative (favor missing a marginal issue over nagging on a fine photo).
+function assessImageQuality(imageBitmap, quality, cropDetected) {
+  const warnings = [];
+
+  if (imageBitmap.width < 400 || imageBitmap.height < 400) {
+    warnings.push("photo resolution is quite low");
+  }
+  if (quality.sharpness < 0.03) {
+    warnings.push("photo looks blurry");
+  }
+  if (quality.brightness < 40) {
+    warnings.push("photo looks too dark");
+  } else if (quality.brightness > 235) {
+    warnings.push("photo looks overexposed");
+  }
+  if (!cropDetected) {
+    warnings.push("couldn't clearly find the card's edges — try filling more of the frame");
+  }
+
+  return warnings;
+}
+
 async function runOcr(dataUrl, fallbackDataUrl = "") {
-  if (!window.Tesseract) return { text: "", nameLine: "" };
+  if (!window.Tesseract) return { text: "", nameLine: "", numberLine: "" };
   try {
     const result = await window.Tesseract.recognize(dataUrl, "eng", {
       logger: (m) => {
@@ -183,24 +350,34 @@ async function runOcr(dataUrl, fallbackDataUrl = "") {
     const topStrip = await makeTopStripDataUrl(dataUrl);
     const topResult = await window.Tesseract.recognize(topStrip, "eng");
 
+    // A third pass on the bottom strip helps recover the collector number.
+    const bottomStrip = await makeBottomStripDataUrl(dataUrl);
+    const bottomResult = await window.Tesseract.recognize(bottomStrip, "eng");
+
     let fallbackResult = "";
     let fallbackNameLine = "";
+    let fallbackNumberLine = "";
     if (fallbackDataUrl && fallbackDataUrl !== dataUrl) {
       const fallbackStrip = await makeTopStripDataUrl(fallbackDataUrl);
       const fallbackTop = await window.Tesseract.recognize(fallbackStrip, "eng");
       fallbackResult = fallbackTop?.data?.text || "";
       fallbackNameLine = fallbackResult;
+
+      const fallbackBottomStrip = await makeBottomStripDataUrl(fallbackDataUrl);
+      const fallbackBottom = await window.Tesseract.recognize(fallbackBottomStrip, "eng");
+      fallbackNumberLine = fallbackBottom?.data?.text || "";
     }
 
-    const text = [result?.data?.text || "", topResult?.data?.text || "", fallbackResult]
+    const text = [result?.data?.text || "", topResult?.data?.text || "", bottomResult?.data?.text || "", fallbackResult]
       .join(" ")
       .replace(/\s+/g, " ")
       .trim();
     const nameLine = [topResult?.data?.text || "", fallbackNameLine].filter(Boolean).join("\n");
+    const numberLine = [bottomResult?.data?.text || "", fallbackNumberLine].filter(Boolean).join("\n");
 
-    return { text, nameLine };
+    return { text, nameLine, numberLine };
   } catch {
-    return { text: "", nameLine: "" };
+    return { text: "", nameLine: "", numberLine: "" };
   }
 }
 
@@ -211,16 +388,33 @@ function extractNameFromNameLine(nameLine) {
   const raw = String(nameLine || "");
   if (!raw.trim()) return "";
 
-  const noiseWords = new Set(["basic", "stage", "pokemon", "pokémon", "hp", "lv", "level"]);
+  // Also filters boilerplate that sits right next to the name in the
+  // cropped strip: "Evolves from X" and "Put X on the Basic Pokemon card"
+  // banners on evolution-stage cards.
+  const noiseWords = new Set([
+    "basic", "stage", "pokemon", "pokémon", "hp", "lv", "level",
+    "evolves", "evolve", "from", "put", "the", "on", "card",
+  ]);
   const lines = raw.split(/\n/).map((line) => line.trim()).filter(Boolean);
 
   for (const line of lines) {
     const words = line
       .split(/\s+/)
       .map((w) => w.replace(/[^a-zA-Z'.-]/g, ""))
-      .filter((w) => w.length >= 2 && !noiseWords.has(w.toLowerCase()) && !/^\d+$/.test(w));
+      // No official Pokemon name is shorter than 3 letters ("Mew", "Muk").
+      // A surviving 1-2 letter fragment is essentially always OCR noise
+      // (seen in practice: a badly-misread card producing "Vv" as "the
+      // name") rather than a real short name, so it's worth the rare
+      // false-negative on a genuinely 2-letter trainer/item card name.
+      .filter((w) => w.length >= 3 && !noiseWords.has(w.toLowerCase()) && !/^\d+$/.test(w));
 
-    if (words.length) {
+    // A real Pokemon/card name is essentially never more than 3 words. More
+    // survivors than that is a sign this line is garbled OCR mixing several
+    // banner/title elements together (seen in practice: "Evolves From
+    // Charmander Pos Crarmelocr Bren Base Pokdmen") — better to try the next
+    // line, or give up, than to confidently return a nonsense blob as "the
+    // name" that then gets displayed as if it were a real finding.
+    if (words.length >= 1 && words.length <= 3) {
       return words.join(" ").toLowerCase();
     }
   }
@@ -228,14 +422,22 @@ function extractNameFromNameLine(nameLine) {
   return "";
 }
 
-async function identifyCard(ocrText, scanHints = {}, nameLineText = "") {
+async function identifyCard(ocrText, scanHints = {}, nameLineText = "", numberLineText = "") {
   const cleaned = sanitizeOcrText(ocrText);
-  const probableName = extractNameFromNameLine(nameLineText) || guessPokemonName(cleaned);
+  const probableName = extractNameFromNameLine(nameLineText) || guessPokemonName(cleaned) || cleanText(scanHints.name);
   const tokens = extractSearchTokens(cleaned);
-  const ocrHints = { ...extractOcrCardHints(cleaned, nameLineText), ...scanHints };
+  const ocrHints = { ...extractOcrCardHints(cleaned, nameLineText, numberLineText), ...scanHints };
   const collectorNumber = normalizeCollectorNumber(ocrHints.number);
 
-  if (!probableName && !tokens.length) {
+  // A name (from the dedicated name-strip OCR pass) or a collector number
+  // (from the dedicated number-strip pass) is required to search at all.
+  // Loose body-text tokens alone are NOT enough of a signal to anchor a
+  // search on — without a name/number, a fuzzy substring search on a random
+  // 4+ character word misread from flavor text or an attack description can
+  // confidently "win" against a completely unrelated card (seen in practice:
+  // a blurry Charmeleon scan matched to an unrelated Trainer card). Tokens
+  // still help as supplementary fallback queries below, just never alone.
+  if (!probableName && !collectorNumber && !cleanText(scanHints.name)) {
     return {
       found: false,
       name: ocrHints.name || "Unknown Card",
@@ -244,59 +446,58 @@ async function identifyCard(ocrText, scanHints = {}, nameLineText = "") {
       rarity: ocrHints.rarity || "",
       confidence: "low",
       autoRecord: ocrHints,
+      candidates: [],
     };
   }
 
-  const candidates = [];
-  const seen = new Set();
-
-  const queries = [];
+  // TCGdex's list endpoint only returns brief {id, localId, name} objects —
+  // search broadly and cheaply here, then fetch full detail (pricing,
+  // abilities, hp, set info) only for a short, pre-ranked shortlist. This
+  // replaces the old pokemontcg.io Lucene-query approach; substring matching
+  // is TCGdex's default filter behavior, so far fewer query variants are
+  // needed than the old name:"X"/name:X/name:*X* trio.
+  const briefQueries = [];
   if (probableName && collectorNumber) {
-    queries.push(`name:"${probableName}" number:"${collectorNumber}"`);
+    briefQueries.push({ name: probableName, localId: collectorNumber });
   }
   if (probableName) {
-    queries.push(`name:"${probableName}"`);
-    queries.push(`name:${probableName}`);
-    queries.push(`name:*${probableName}*`);
+    briefQueries.push({ name: probableName });
   }
   if (collectorNumber) {
-    queries.push(`number:"${collectorNumber}"`);
+    briefQueries.push({ localId: collectorNumber });
   }
-  tokens.slice(0, 6).forEach((token) => {
-    queries.push(`name:*${token}*`);
+  const coreQueryCount = briefQueries.length;
+  tokens.slice(0, 4).forEach((token) => {
+    briefQueries.push({ name: token });
   });
 
+  const briefCandidates = [];
+  const seenBrief = new Set();
   let apiError = false;
 
   try {
-    for (const q of queries) {
-      const params = new URLSearchParams({
-        q,
-        pageSize: "35",
-      });
-      const url = `https://api.pokemontcg.io/v2/cards?${params.toString()}`;
-      let resp;
+    for (let i = 0; i < briefQueries.length; i += 1) {
+      let rows;
       try {
-        resp = await fetchWithRetry(url, {}, 1, 350);
+        rows = await tcgdexSearchCards(briefQueries[i]);
       } catch {
         apiError = true;
         continue;
       }
-      if (!resp.ok) {
-        apiError = true;
-        continue;
-      }
-      const json = await resp.json();
-      const rows = Array.isArray(json?.data) ? json.data : [];
       rows.forEach((row) => {
-        if (!row?.id || seen.has(row.id)) return;
-        seen.add(row.id);
-        candidates.push(row);
+        if (!row?.id || seenBrief.has(row.id)) return;
+        seenBrief.add(row.id);
+        briefCandidates.push(row);
       });
-      if (candidates.length >= 120) break;
+      if (briefCandidates.length >= 120) break;
+      // Skip the remaining speculative token queries once the targeted
+      // name/number queries already found a healthy candidate pool — this
+      // is the main source of real-world latency (and API flakiness
+      // exposure) on a successful, well-OCR'd scan.
+      if (i + 1 === coreQueryCount && briefCandidates.length >= 15) break;
     }
 
-    if (!candidates.length) {
+    if (!briefCandidates.length) {
       return {
         found: false,
         name: ocrHints.name || titleCase(probableName || tokens[0] || "Unknown Card"),
@@ -306,10 +507,30 @@ async function identifyCard(ocrText, scanHints = {}, nameLineText = "") {
         confidence: "medium",
         autoRecord: ocrHints,
         apiError,
+        candidates: [],
       };
     }
 
-    const scored = candidates
+    const shortlistBriefs = coarseRankBriefCandidates(briefCandidates, probableName, collectorNumber).slice(0, 10);
+    const fullCards = (await Promise.all(
+      shortlistBriefs.map((brief) => tcgdexGetCard(brief.id).catch(() => null)),
+    )).filter(Boolean);
+
+    if (!fullCards.length) {
+      return {
+        found: false,
+        name: ocrHints.name || titleCase(probableName || tokens[0] || "Unknown Card"),
+        set: ocrHints.set || "Unknown Set",
+        number: ocrHints.number || "",
+        rarity: ocrHints.rarity || "",
+        confidence: "medium",
+        autoRecord: ocrHints,
+        apiError: true,
+        candidates: [],
+      };
+    }
+
+    const scored = fullCards
       .map((card) => ({ card, score: scoreCardMatch(card, cleaned, ocrHints) }))
       .sort((a, b) => b.score - a.score);
 
@@ -317,21 +538,50 @@ async function identifyCard(ocrText, scanHints = {}, nameLineText = "") {
     const leadScore = Number(scored[0]?.score || 0);
     const secondScore = Number(scored[1]?.score || 0);
     const scoreGap = leadScore - secondScore;
+
+    // Absolute floor, independent of confidence tiers: a genuine match (even
+    // a low-confidence one) clears this easily via the name-inclusion bonus
+    // or several fuzzy name-part hits. Anything scoring lower than this is
+    // most likely a coincidental substring hit on garbled OCR text, not a
+    // real candidate — presenting it (and 4 similarly-weak "alternatives")
+    // as if it were a plausible finding is actively misleading.
+    if (leadScore < 20) {
+      return {
+        found: false,
+        name: ocrHints.name || titleCase(probableName || tokens[0] || "Unknown Card"),
+        set: ocrHints.set || "Unknown Set",
+        number: ocrHints.number || "",
+        rarity: ocrHints.rarity || "",
+        confidence: "low",
+        autoRecord: ocrHints,
+        apiError,
+        candidates: [],
+      };
+    }
+
+    const matchedData = extractAutoCardData(first);
     const autoRecord = {
       ...ocrHints,
-      ...extractAutoCardData(first),
+      ...matchedData,
+      // A number/HP read directly off the card is stronger evidence than the
+      // matched database record's own fields, which are only as good as the
+      // match itself — especially important when confidence isn't high and
+      // the match could be the wrong printing of a same-named card.
+      number: cleanText(ocrHints.number) || matchedData.number,
+      hp: cleanText(ocrHints.hp) || matchedData.hp,
     };
 
     return {
       found: true,
       name: autoRecord.name || first.name || titleCase(probableName),
       set: autoRecord.set || first.set?.name || "Unknown Set",
-      number: autoRecord.number || first.number || "",
+      number: autoRecord.number || first.localId || "",
       rarity: autoRecord.rarity || first.rarity || "",
       values: extractCardValues(first),
       confidence: resolveLookupConfidence(first, ocrHints, leadScore, scoreGap),
       autoRecord,
       apiError,
+      candidates: buildCandidateSummaries(scored),
     };
   } catch {
     return {
@@ -343,8 +593,43 @@ async function identifyCard(ocrText, scanHints = {}, nameLineText = "") {
       confidence: "low",
       autoRecord: ocrHints,
       apiError: true,
+      candidates: [],
     };
   }
+}
+
+// Cheap pre-rank on brief {id, localId, name} objects before spending a full
+// detail fetch on each: an exact collector-number match is the strongest
+// signal, exact/substring name match next, otherwise preserve query order
+// (earlier queries were more targeted).
+function coarseRankBriefCandidates(briefs, probableName, collectorNumber) {
+  const wantedName = String(probableName || "").toLowerCase();
+  return briefs
+    .map((brief, index) => {
+      let score = -index;
+      const briefNumber = normalizeCollectorNumber(brief.localId);
+      if (collectorNumber && briefNumber && briefNumber === collectorNumber) score += 1000;
+      const briefName = String(brief.name || "").toLowerCase();
+      if (wantedName && briefName === wantedName) score += 200;
+      else if (wantedName && briefName.includes(wantedName)) score += 100;
+      return { brief, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => entry.brief);
+}
+
+// Top-ranked alternates for the "other possible matches" picker — kept small
+// and display-only (id/name/set/number/image/score) rather than the full API
+// record, since the user only needs enough to tell printings apart.
+function buildCandidateSummaries(scored) {
+  return scored.slice(0, 5).map(({ card, score }) => ({
+    id: cleanText(card?.id),
+    name: cleanText(card?.name),
+    set: cleanText(card?.set?.name),
+    number: cleanText(card?.localId),
+    image: cleanText(card?.image) ? `${cleanText(card.image)}/low.png` : "",
+    score,
+  })).filter((entry) => entry.id);
 }
 
 function buildAnalysisResult(quality, cardInfo, ocrText) {
@@ -365,6 +650,7 @@ function buildAnalysisResult(quality, cardInfo, ocrText) {
     condition: quality,
     autoRecord,
     autoFieldCount: countAutoCapturedFields(autoRecord),
+    candidates: Array.isArray(cardInfo.candidates) ? cardInfo.candidates : [],
   };
 }
 
@@ -387,11 +673,12 @@ function renderResult(analysis) {
   addScoreRow("Edges", analysis.condition.edges);
   addScoreRow("Surface", analysis.condition.surface);
 
-  els.analysisValues.innerHTML = `
-    <div title="From live TCGplayer/Cardmarket pricing for this card"><span>Raw (market)</span><strong>${money(analysis.values?.raw)}</strong></div>
-    <div class="value-estimated" title="${PSA_ESTIMATE_TOOLTIP}"><span>PSA 9 (rough est.)</span><strong>${money(analysis.values?.psa9)}</strong></div>
-    <div class="value-estimated" title="${PSA_ESTIMATE_TOOLTIP}"><span>PSA 10 (rough est.)</span><strong>${money(analysis.values?.psa10)}</strong></div>
-  `;
+  renderCandidateList(analysis);
+
+  // Pricing display is paused for now while we focus on identification
+  // accuracy — the raw/PSA9/PSA10 values are still fetched and stored
+  // (see analysis.values), just not shown here.
+  els.analysisValues.innerHTML = "";
 
   els.editName.value = analysis.name || "";
   els.editSet.value = analysis.set || "";
@@ -419,6 +706,7 @@ function renderResult(analysis) {
       ["Cardmarket", analysis.autoRecord?.tcg?.cardmarketUrl],
       ["Scan Confidence", analysis.confidence],
       ["Auto Fields", String(analysis.autoFieldCount || 0)],
+      ["Text We Read", analysis.ocrExcerpt],
     ],
   });
 
@@ -436,9 +724,84 @@ function addScoreRow(label, value) {
   els.scoreList.appendChild(row);
 }
 
+function renderCandidateList(analysis) {
+  if (!els.candidateList) return;
+  const candidates = Array.isArray(analysis.candidates) ? analysis.candidates : [];
+  const showList = candidates.length > 1 && analysis.confidence !== "high";
+  els.candidateList.classList.toggle("hidden", !showList);
+  els.candidateCards.innerHTML = "";
+  if (!showList) return;
+
+  candidates.forEach((candidate) => {
+    const node = els.candidateCardTemplate.content.firstElementChild.cloneNode(true);
+    const thumb = node.querySelector(".candidate-thumb");
+    const name = node.querySelector(".candidate-name");
+    const meta = node.querySelector(".candidate-meta");
+    thumb.src = candidate.image || "";
+    thumb.alt = `${candidate.name || "Card"} thumbnail`;
+    name.textContent = candidate.name || "Unknown Card";
+    meta.textContent = [candidate.set, candidate.number && `#${candidate.number}`].filter(Boolean).join(" · ") || "Unknown printing";
+    node.addEventListener("click", () => selectCandidateCard(candidate.id));
+    els.candidateCards.appendChild(node);
+  });
+}
+
+// Swaps the active result to a specific candidate the user picked instead of
+// the automatically top-scored one. Reuses the OCR-derived condition/OCR
+// excerpt already on hand rather than re-running OCR.
+async function selectCandidateCard(cardId) {
+  if (!cardId || !state.analysis) return;
+  status("Loading selected card...");
+  try {
+    const card = await tcgdexGetCard(cardId);
+    if (!card) {
+      status("Could not load that card. Try again.");
+      return;
+    }
+
+    const previousAuto = state.analysis.autoRecord || {};
+    const matchedData = extractAutoCardData(card);
+    const autoRecord = {
+      ...previousAuto,
+      ...matchedData,
+      number: cleanText(previousAuto.number) || matchedData.number,
+      hp: cleanText(previousAuto.hp) || matchedData.hp,
+    };
+
+    const cardInfo = {
+      found: true,
+      name: autoRecord.name || card.name || "Unknown Card",
+      set: autoRecord.set || card.set?.name || "Unknown Set",
+      number: autoRecord.number || card.localId || "",
+      rarity: autoRecord.rarity || card.rarity || "",
+      values: extractCardValues(card),
+      confidence: "high",
+      autoRecord,
+      candidates: state.analysis.candidates || [],
+    };
+
+    const analysis = buildAnalysisResult(state.analysis.condition, cardInfo, state.analysis.ocrExcerpt || "");
+    analysis.candidates = state.analysis.candidates || [];
+    state.analysis = analysis;
+    renderResult(analysis);
+    status(`Switched to ${analysis.name}. Review and save when ready.`);
+  } catch {
+    status("Could not load that card. Try again.");
+  }
+}
+
 function saveAnalyzedCard() {
-  if (!state.analysis || !runtime.imageDataUrl) {
+  if (!state.analysis) {
     status("No analysis available to save.");
+    return;
+  }
+
+  // Manual search can produce a result with no locally scanned photo — fall
+  // back to the matched card's official image so it can still be saved.
+  const auto = state.analysis.autoRecord || {};
+  const cardImage = runtime.imageDataUrl || cleanText(auto.images?.large) || cleanText(auto.images?.small);
+  if (!cardImage) {
+    status("Add a photo, or pick a manual-search match with an official image, before saving.");
     return;
   }
 
@@ -451,7 +814,6 @@ function saveAnalyzedCard() {
 
   const page = findPageWithSpace(binderId);
   const slotOrder = getNextSlotOrder(binderId, page);
-  const auto = state.analysis.autoRecord || {};
   const savedAt = Date.now();
 
   const card = {
@@ -469,7 +831,7 @@ function saveAnalyzedCard() {
     page,
     slotOrder,
     purchasePrice: parseNullableNumber(els.editPurchase.value),
-    image: runtime.imageDataUrl,
+    image: cardImage,
     addedAt: savedAt,
     hp: cleanText(auto.hp),
     supertype: cleanText(auto.supertype),
@@ -513,6 +875,7 @@ function resetScanFlow() {
   runtime.imageDataUrl = null;
   runtime.imageBitmap = null;
   state.analysis = null;
+  runtime.scanState = "idle";
 
   els.previewImage.src = "";
   els.previewWrap.classList.add("hidden");
@@ -852,15 +1215,34 @@ function extractSearchTokens(ocrText) {
   return [...new Set(words)];
 }
 
-function scoreCardMatch(card, ocrText) {
+function scoreCardMatch(card, ocrText, hints = {}) {
   const text = String(ocrText || "").toLowerCase();
   const name = String(card?.name || "").toLowerCase();
   const set = String(card?.set?.name || "").toLowerCase();
-  const number = String(card?.number || "").toLowerCase();
+  const cardNumber = normalizeCollectorNumber(card?.localId);
+  const hintedNumber = normalizeCollectorNumber(hints?.number);
+  const cardHp = cleanText(card?.hp);
+  const hintedHp = cleanText(hints?.hp);
 
   let score = 0;
   if (name && text.includes(name)) score += 90;
-  if (number && text.includes(number)) score += 20;
+
+  if (hintedNumber && cardNumber) {
+    // An exact number match is one of the strongest disambiguators between
+    // same-named cards across sets/reprints; a confident mismatch should
+    // actively demote the candidate rather than being ignored.
+    score += hintedNumber === cardNumber ? 70 : -40;
+  } else if (cardNumber.length >= 2 && text.includes(cardNumber.toLowerCase())) {
+    // Fallback for when OCR didn't cleanly parse a number hint: only credit
+    // this from the raw text for numbers long enough to not match by chance
+    // (a single digit like "4" would match almost any OCR text).
+    score += 20;
+  }
+
+  if (hintedHp && cardHp) {
+    score += hintedHp === cardHp ? 25 : -15;
+  }
+
   if (set && text.includes(set)) score += 14;
 
   const nameParts = name.split(/\s+/).filter((w) => w.length >= 3);
@@ -917,6 +1299,40 @@ function makeTopStripDataUrl(dataUrl) {
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(img, 0, 0, img.width, cropH, 0, 0, canvas.width, canvas.height);
+
+      const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = id.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        const boosted = Math.max(0, Math.min(255, (gray - 112) * 1.6 + 128));
+        d[i] = boosted;
+        d[i + 1] = boosted;
+        d[i + 2] = boosted;
+      }
+      ctx.putImageData(id, 0, 0);
+      resolve(canvas.toDataURL("image/png", 0.92));
+    };
+    img.onerror = () => reject(new Error("Could not process OCR strip"));
+    img.src = dataUrl;
+  });
+}
+
+// Cropped tightly to the bottom edge where the collector number/rarity print
+// sits, so this pass reads far more reliably than fishing for a short number
+// anywhere in the full card text (which is full of other numbers: HP, attack
+// damage, weakness, retreat cost, the Pokedex "LV. NN #N" reference line).
+function makeBottomStripDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const cropH = Math.max(60, Math.round(img.height * 0.12));
+      const cropY = Math.max(0, img.height - cropH);
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width * 2;
+      canvas.height = cropH * 2;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, 0, cropY, img.width, cropH, 0, 0, canvas.width, canvas.height);
 
       const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const d = id.data;

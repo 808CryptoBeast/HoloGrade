@@ -1583,9 +1583,8 @@ function renderCardItem(card, context) {
     addTag(tags, `Paid $${card.purchasePrice.toFixed(2)}`);
   }
 
-  chartWrap.innerHTML = context?.compactList
-    ? ""
-    : renderSparklineSvg(getCardHistorySeries(card), money(card.rawValue || 0));
+  // Pricing (raw value trend chart) is paused for now — see analysisValues in scan.js.
+  chartWrap.innerHTML = "";
 
   const totalPages = Number(context?.totalPages || 1);
   moveSelect.innerHTML = Array.from({ length: totalPages }, (_, i) => {
@@ -1752,19 +1751,15 @@ function addTag(parent, text) {
 }
 
 function renderSummary() {
+  // Pricing (raw/graded value, P/L) is paused for now — see analysisValues
+  // in scan.js.
   const total = state.cards.length;
   const avgGrade = total ? state.cards.reduce((s, c) => s + c.grade, 0) / total : 0;
   const invested = state.cards.filter((c) => c.purchasePrice != null);
-  const rawTotal = state.cards.reduce((sum, c) => sum + Number(c.rawValue || 0), 0);
-  const gradedTotal = state.cards.reduce((sum, c) => sum + getEstimatedGradedValue(c), 0);
-  const totalPL = invested.reduce((sum, c) => sum + (Number(c.rawValue || 0) - Number(c.purchasePrice || 0)), 0);
 
   els.collectionSummary.innerHTML = `
     <div><span>Total Cards</span><strong>${total}</strong></div>
     <div><span>Average Grade</span><strong>${total ? avgGrade.toFixed(2) : "-"}</strong></div>
-    <div><span>Raw Value</span><strong>${money(rawTotal)}</strong></div>
-    <div><span>Graded Value</span><strong>${money(gradedTotal)}</strong></div>
-    <div><span>P / L</span><strong>${invested.length ? money(totalPL) : "-"}</strong></div>
     <div><span>Tracked Cards</span><strong>${invested.length}</strong></div>
   `;
 }

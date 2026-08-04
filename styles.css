@@ -242,6 +242,29 @@ main {
   color: var(--muted);
 }
 
+.manual-search {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.manual-search summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.manual-search .sub-grid {
+  margin-top: 10px;
+}
+
+.manual-search .btn {
+  margin-top: 10px;
+}
+
 .grade-card {
   display: flex;
   justify-content: space-between;
@@ -297,6 +320,61 @@ main {
 .score-row .fill {
   height: 100%;
   background: linear-gradient(90deg, var(--accent), #f8f08e);
+}
+
+.candidate-list {
+  margin: 4px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.candidate-list h3 {
+  margin: 0 0 2px;
+  font-size: 14px;
+}
+
+.candidate-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.candidate-card {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.candidate-card:hover {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.candidate-thumb {
+  width: 100%;
+  aspect-ratio: 2.5 / 3.5;
+  object-fit: cover;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.candidate-name {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.candidate-meta {
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .result-grid {

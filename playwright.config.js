@@ -3,7 +3,9 @@ const { defineConfig } = require("@playwright/test");
 
 module.exports = defineConfig({
   testDir: "./tests",
-  timeout: 45000,
+  // pokemontcg.io's free tier is visibly flaky/slow under load; OCR+match
+  // specs need headroom beyond the default 30s.
+  timeout: 75000,
   fullyParallel: false,
   retries: 0,
   reporter: "list",

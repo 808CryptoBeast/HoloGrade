@@ -134,6 +134,7 @@ const els = {
 
   startCameraBtn: byId("startCameraBtn"),
   cancelCameraBtn: byId("cancelCameraBtn"),
+  switchCameraBtn: byId("switchCameraBtn"),
   captureBtn: byId("captureBtn"),
   uploadInput: byId("uploadInput"),
   cameraBox: byId("cameraBox"),
@@ -144,12 +145,19 @@ const els = {
   analyzeBtn: byId("analyzeBtn"),
   resetScanBtn: byId("resetScanBtn"),
   scanStatus: byId("scanStatus"),
+  manualSearchName: byId("manualSearchName"),
+  manualSearchNumber: byId("manualSearchNumber"),
+  manualSearchSet: byId("manualSearchSet"),
+  manualSearchBtn: byId("manualSearchBtn"),
 
   resultPanel: byId("resultPanel"),
   resultName: byId("resultName"),
   resultMeta: byId("resultMeta"),
   resultGrade: byId("resultGrade"),
   scoreList: byId("scoreList"),
+  candidateList: byId("candidateList"),
+  candidateCards: byId("candidateCards"),
+  candidateCardTemplate: byId("candidateCardTemplate"),
   analysisValues: byId("analysisValues"),
   analysisAutoInfo: byId("analysisAutoInfo"),
   editName: byId("editName"),
@@ -230,6 +238,10 @@ const runtime = {
   stream: null,
   imageDataUrl: null,
   imageBitmap: null,
+  scanBusy: false,
+  scanState: "idle",
+  videoDevices: [],
+  videoDeviceIndex: 0,
   viewPageByBinder: {},
   dragCardId: null,
   openBinders: {},
@@ -341,10 +353,6 @@ function clamp(v, min, max) {
 function round1(v) {
   return Math.round(v * 10) / 10;
 }
-
-// pokemontcg.io's free/unauthenticated tier returns intermittent 500s under
-// light load. One short retry turns a lot of those into a successful lookup
-// instead of a silent "low confidence" result.
 
 function parseNullableNumber(value) {
   if (value == null || value === "") return null;

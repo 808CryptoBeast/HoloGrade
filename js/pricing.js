@@ -1,22 +1,28 @@
 function extractCardValues(card) {
-  const prices = card?.tcgplayer?.prices || {};
-  const cardmarketPrices = card?.cardmarket?.prices || {};
+  // TCGdex embeds pricing directly on the card: card.pricing.tcgplayer is
+  // keyed by print variant (normal/holofoil/reverse-holofoil/...), each a
+  // {lowPrice,midPrice,highPrice,marketPrice,directLowPrice} object, plus
+  // "unit"/"updated" keys to skip. card.pricing.cardmarket is a flat set of
+  // EUR price fields (plus "-holo" variants).
+  const tcgplayer = card?.pricing?.tcgplayer || {};
+  const cardmarket = card?.pricing?.cardmarket || {};
 
-  const tcgValues = Object.values(prices)
-    .flatMap((entry) => [
-      Number(entry?.market || 0),
-      Number(entry?.mid || 0),
-      Number(entry?.low || 0),
-      Number(entry?.high || 0),
+  const tcgValues = Object.entries(tcgplayer)
+    .filter(([key]) => key !== "unit" && key !== "updated")
+    .flatMap(([, entry]) => [
+      Number(entry?.marketPrice || 0),
+      Number(entry?.midPrice || 0),
+      Number(entry?.lowPrice || 0),
+      Number(entry?.highPrice || 0),
     ])
     .filter((value) => Number.isFinite(value) && value > 0);
 
   const cardmarketValues = [
-    Number(cardmarketPrices?.averageSellPrice || 0),
-    Number(cardmarketPrices?.trendPrice || 0),
-    Number(cardmarketPrices?.avg1 || 0),
-    Number(cardmarketPrices?.avg7 || 0),
-    Number(cardmarketPrices?.avg30 || 0),
+    Number(cardmarket?.avg || 0),
+    Number(cardmarket?.trend || 0),
+    Number(cardmarket?.avg1 || 0),
+    Number(cardmarket?.avg7 || 0),
+    Number(cardmarket?.avg30 || 0),
   ].filter((value) => Number.isFinite(value) && value > 0);
 
   const tcgBest = tcgValues.length ? Math.max(...tcgValues) : 0;
@@ -28,22 +34,26 @@ function extractCardValues(card) {
 function extractAutoCardData(card) {
   if (!card || typeof card !== "object") return {};
 
+  const imageBase = cleanText(card.image);
+
   return {
     name: cleanText(card.name),
     set: cleanText(card.set?.name),
-    number: cleanText(card.number),
+    number: cleanText(card.localId),
     rarity: cleanText(card.rarity),
-    supertype: cleanText(card.supertype),
-    subtypes: asCleanStringArray(card.subtypes),
+    supertype: cleanText(card.category),
+    // TCGdex doesn't model subtypes as a flat array the way pokemontcg.io
+    // did — approximate with whatever stage info is present.
+    subtypes: asCleanStringArray([card.stage, card.suffix]),
     hp: cleanText(card.hp),
     types: asCleanStringArray(card.types),
-    evolvesFrom: cleanText(card.evolvesFrom),
-    evolvesTo: asCleanStringArray(card.evolvesTo),
+    evolvesFrom: cleanText(card.evolveFrom),
+    evolvesTo: [],
     abilities: Array.isArray(card.abilities)
       ? card.abilities
         .map((ability) => ({
           name: cleanText(ability?.name),
-          text: cleanText(ability?.text),
+          text: cleanText(ability?.effect),
           type: cleanText(ability?.type),
         }))
         .filter((ability) => ability.name || ability.text || ability.type)
@@ -52,10 +62,10 @@ function extractAutoCardData(card) {
       ? card.attacks
         .map((attack) => ({
           name: cleanText(attack?.name),
-          text: cleanText(attack?.text),
+          text: cleanText(attack?.effect),
           damage: cleanText(attack?.damage),
           cost: asCleanStringArray(attack?.cost),
-          convertedEnergyCost: Number(attack?.convertedEnergyCost) || 0,
+          convertedEnergyCost: Array.isArray(attack?.cost) ? attack.cost.length : 0,
         }))
         .filter((attack) => attack.name || attack.text || attack.damage)
       : [],
@@ -75,53 +85,61 @@ function extractAutoCardData(card) {
         }))
         .filter((row) => row.type || row.value)
       : [],
-    retreatCost: asCleanStringArray(card.retreatCost),
-    convertedRetreatCost: Number(card.convertedRetreatCost) || 0,
-    artist: cleanText(card.artist),
-    flavorText: cleanText(card.flavorText),
-    regulationMark: cleanText(card.regulationMark),
-    rules: asCleanStringArray(card.rules),
-    legalities: card.legalities && typeof card.legalities === "object" ? {
-      unlimited: cleanText(card.legalities.unlimited),
-      expanded: cleanText(card.legalities.expanded),
-      standard: cleanText(card.legalities.standard),
+    // TCGdex only gives the numeric retreat cost, not the array of energy
+    // types pokemontcg.io provided.
+    retreatCost: [],
+    convertedRetreatCost: Number(card.retreat) || 0,
+    artist: cleanText(card.illustrator),
+    flavorText: cleanText(card.description),
+    regulationMark: "",
+    rules: [],
+    legalities: card.legal && typeof card.legal === "object" ? {
+      unlimited: "",
+      expanded: cleanText(String(card.legal.expanded ?? "")),
+      standard: cleanText(String(card.legal.standard ?? "")),
     } : {},
-    nationalPokedexNumbers: Array.isArray(card.nationalPokedexNumbers)
-      ? card.nationalPokedexNumbers.filter((n) => Number.isFinite(Number(n))).map((n) => Number(n))
+    nationalPokedexNumbers: Array.isArray(card.dexId)
+      ? card.dexId.filter((n) => Number.isFinite(Number(n))).map((n) => Number(n))
       : [],
     images: {
-      small: cleanText(card.images?.small),
-      large: cleanText(card.images?.large),
+      small: imageBase ? `${imageBase}/low.png` : "",
+      large: imageBase ? `${imageBase}/high.png` : "",
     },
     archives: {
       setArchiveUrl: buildPokemonSetArchiveUrl(card.set),
-      imageLibraryUrl: cleanText(card.images?.large) || cleanText(card.images?.small),
+      imageLibraryUrl: imageBase ? `${imageBase}/high.png` : "",
     },
     tcg: {
       id: cleanText(card.id),
       setId: cleanText(card.set?.id),
-      setSeries: cleanText(card.set?.series),
-      setTotal: Number(card.set?.total) || 0,
-      setPrintedTotal: Number(card.set?.printedTotal) || 0,
-      releaseDate: cleanText(card.set?.releaseDate),
-      ptcgoCode: cleanText(card.set?.ptcgoCode),
-      tcgplayerUrl: cleanText(card.tcgplayer?.url),
-      cardmarketUrl: cleanText(card.cardmarket?.url),
+      setSeries: "",
+      setTotal: Number(card.set?.cardCount?.total) || 0,
+      setPrintedTotal: Number(card.set?.cardCount?.official) || 0,
+      releaseDate: "",
+      ptcgoCode: "",
+      tcgplayerUrl: "",
+      cardmarketUrl: "",
     },
   };
 }
 
-function extractOcrCardHints(ocrText, nameLineText = "") {
+function extractOcrCardHints(ocrText, nameLineText = "", numberLineText = "") {
   const text = String(ocrText || "");
   const probableName = extractNameFromNameLine(nameLineText) || guessPokemonName(text);
-  const numberMatch = text.match(/\b([a-z]{0,3}\d{1,3})\s*\/\s*(\d{1,3})\b/i);
-  const looseNumber = text.match(/\b([a-z]{0,3}\d{1,3})\b/i)?.[1] || "";
+  const fractionPattern = /\b([a-z]{0,3}\d{1,3})\s*\/\s*(\d{1,3})\b/i;
+  // The dedicated bottom-strip OCR pass is cropped tightly to the collector
+  // number's usual location, so it's checked first. A short number-like
+  // token found anywhere in the full card text (HP, attack damage, weakness,
+  // retreat cost, the Pokedex "LV. NN #N" reference line) is not trustworthy
+  // enough to stand in for the actual collector number — better to leave it
+  // blank than to confidently assert a wrong one.
+  const numberMatch = String(numberLineText || "").match(fractionPattern) || text.match(fractionPattern);
   const hp = text.match(/\b(\d{2,3})\s*hp\b/i)?.[1] || "";
 
   return {
     name: probableName ? titleCase(probableName) : "",
     set: "",
-    number: numberMatch ? `${numberMatch[1]}/${numberMatch[2]}` : looseNumber,
+    number: numberMatch ? `${numberMatch[1]}/${numberMatch[2]}` : "",
     rarity: "",
     hp,
   };
@@ -179,34 +197,28 @@ async function recalculateAllCardValues() {
 
 async function fetchCardValuesForExistingCard(card) {
   try {
+    // Cards saved before the TCGdex migration carry a pokemontcg.io-shaped
+    // id (e.g. "base1-4") which simply won't resolve here — tcgdexGetCard
+    // returns null and this falls through to the name/number search below.
     const exactId = cleanText(card?.tcg?.id);
     if (exactId) {
-      const exactResp = await fetchWithRetry(`https://api.pokemontcg.io/v2/cards/${encodeURIComponent(exactId)}`, {}, 1, 350);
-      if (exactResp.ok) {
-        const exactJson = await exactResp.json();
-        if (exactJson?.data) {
-          return extractCardValues(exactJson.data);
-        }
-      }
+      const exactCard = await tcgdexGetCard(exactId);
+      if (exactCard) return extractCardValues(exactCard);
     }
 
-    const queryParts = [];
-    if (cleanText(card.name)) queryParts.push(`name:"${cleanText(card.name)}"`);
-    if (cleanText(card.number)) queryParts.push(`number:${cleanText(card.number).replace("#", "")}`);
-    if (cleanText(card.set)) queryParts.push(`set.name:"${cleanText(card.set)}"`);
-    const q = queryParts.join(" ") || `name:"${cleanText(card.name)}"`;
-    if (!q) return null;
+    const hintedNumber = normalizeCollectorNumber(card.number);
+    const briefs = await tcgdexSearchCards({ name: cleanText(card.name), localId: hintedNumber });
+    if (!briefs.length) return null;
 
-    const params = new URLSearchParams({ q, pageSize: "25" });
-    const resp = await fetchWithRetry(`https://api.pokemontcg.io/v2/cards?${params.toString()}`, {}, 1, 350);
-    if (!resp.ok) return null;
-    const json = await resp.json();
-    const rows = Array.isArray(json?.data) ? json.data : [];
-    if (!rows.length) return null;
+    const shortlist = coarseRankBriefCandidates(briefs, card.name, hintedNumber).slice(0, 5);
+    const fullCards = (await Promise.all(
+      shortlist.map((brief) => tcgdexGetCard(brief.id).catch(() => null)),
+    )).filter(Boolean);
+    if (!fullCards.length) return null;
 
     const ocrLike = `${card.name || ""} ${card.set || ""} ${card.number || ""}`.toLowerCase();
-    const best = rows
-      .map((row) => ({ row, score: scoreCardMatch(row, ocrLike) }))
+    const best = fullCards
+      .map((row) => ({ row, score: scoreCardMatch(row, ocrLike, { number: card.number, hp: card.hp }) }))
       .sort((a, b) => b.score - a.score)[0]?.row;
     if (!best) return null;
     return extractCardValues(best);
@@ -231,22 +243,14 @@ function stabilizeRepricedValues(existingCard, nextValues) {
 }
 
 
-function getEstimatedGradedValue(card) {
-  const grade = Number(card.grade || 0);
-  if (grade >= 9.5) return Number(card.psa10Value || card.rawValue || 0);
-  if (grade >= 8.5) return Number(card.psa9Value || card.rawValue || 0);
-  return Number(card.rawValue || 0) * 1.15;
-}
-
-
 function normalizeCollectorNumber(value) {
   return cleanText(value).split("/")[0].toUpperCase();
 }
 
 function resolveLookupConfidence(card, hints, leadScore, scoreGap) {
-  const cardNumber = cleanText(card?.number).toUpperCase();
+  const cardNumber = cleanText(card?.localId).toUpperCase();
   const hintedNumber = normalizeCollectorNumber(hints?.number);
-  const setPrintedTotal = Number(card?.set?.printedTotal) || Number(card?.set?.total) || 0;
+  const setPrintedTotal = Number(card?.set?.cardCount?.official) || Number(card?.set?.cardCount?.total) || 0;
   const hintedTotal = Number(cleanText(hints?.number).split("/")[1] || 0);
   const numberMatched = !hintedNumber || !cardNumber ? false : cardNumber.toUpperCase() === hintedNumber;
   const totalMatched = !hintedTotal || !setPrintedTotal ? false : hintedTotal === setPrintedTotal;
@@ -314,60 +318,30 @@ async function fetchWithRetry(url, options = {}, retries = 1, delayMs = 350) {
   throw lastError || new Error("fetchWithRetry failed");
 }
 
+const TCGDEX_BASE = "https://api.tcgdex.net/v2/en";
 
-function renderSparklineSvg(values, label) {
-  const points = values.length ? values : [0, 0, 0, 0, 0, 0];
-  const min = Math.min(...points);
-  const max = Math.max(...points);
-  const range = max - min || 1;
-  const width = 280;
-  const height = 64;
-  const coords = points.map((value, index) => {
-    const x = (index / Math.max(points.length - 1, 1)) * (width - 8) + 4;
-    const y = height - 10 - ((value - min) / range) * (height - 24);
-    return [x, y];
+// The list endpoint only returns brief objects ({id, localId, name} — no
+// set/hp/pricing/abilities), unlike pokemontcg.io's search which returned
+// full records. That's intentional here: search stays cheap and broad, then
+// tcgdexGetCard() fetches full detail only for the shortlist worth scoring.
+async function tcgdexSearchCards(params) {
+  const query = new URLSearchParams();
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (cleanText(value)) query.set(key, value);
   });
-  const line = coords.map(([x, y], index) => `${index === 0 ? "M" : "L"}${x} ${y}`).join(" ");
-  const area = `${line} L ${coords[coords.length - 1][0]} ${height - 8} L ${coords[0][0]} ${height - 8} Z`;
-  return `
-    <svg class="sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
-      <path class="area" d="${area}"></path>
-      <path class="line" d="${line}"></path>
-      <text x="6" y="12">6M sold trend</text>
-      <text x="${width - 6}" y="12" text-anchor="end">${escapeHtml(label)}</text>
-    </svg>
-  `;
+  const url = `${TCGDEX_BASE}/cards?${query.toString()}`;
+  const resp = await fetchWithRetry(url, {}, 1, 350);
+  if (!resp.ok) throw new Error(`TCGdex search failed (${resp.status})`);
+  const json = await resp.json();
+  return Array.isArray(json) ? json : [];
 }
 
-function getCardHistorySeries(card) {
-  const seed = hashCode(`${card.id}:${card.name}`);
-  const current = Number(card.rawValue || 0) || 1;
-  return generateHistorySeries(current, seed, 6);
+async function tcgdexGetCard(id) {
+  if (!cleanText(id)) return null;
+  const resp = await fetchWithRetry(`${TCGDEX_BASE}/cards/${encodeURIComponent(id)}`, {}, 1, 350);
+  if (!resp.ok) return null;
+  const json = await resp.json();
+  return json && typeof json === "object" ? json : null;
 }
 
-function getBinderHistorySeries(binderId) {
-  const cards = state.cards.filter((card) => card.binderId === binderId);
-  const current = cards.reduce((sum, card) => sum + Number(card.rawValue || 0), 0) || 1;
-  return generateHistorySeries(current, hashCode(binderId), 6);
-}
-
-function generateHistorySeries(current, seed, length) {
-  const values = [];
-  for (let index = 0; index < length; index += 1) {
-    const factor = pseudo(seed + index) * 0.34 - 0.17;
-    const ageWeight = (length - index) / length;
-    values.push(roundMoney(current * (1 - factor * ageWeight)));
-  }
-  values[length - 1] = roundMoney(current);
-  return values;
-}
-
-function pseudo(seed) {
-  const x = Math.sin(seed * 12.9898) * 43758.5453;
-  return x - Math.floor(x);
-}
-
-function hashCode(value) {
-  return String(value || "").split("").reduce((acc, char) => acc + char.charCodeAt(0), 0) || 1;
-}
 

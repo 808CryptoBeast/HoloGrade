@@ -33,7 +33,7 @@
             <div class="row-between">
               <div>
                 <h2>Collector Dashboard</h2>
-                <p class="muted">Start here for market pulse, collection totals, and your top binder activity.</p>
+                <p class="muted">Start here for collection totals, condition estimates, and your top binder activity.</p>
               </div>
               <button id="refreshNewsBtn" class="btn ghost small" type="button">Refresh News</button>
             </div>
@@ -61,6 +61,7 @@
             <div class="camera-overlay"></div>
             <div class="camera-actions">
               <button id="cancelCameraBtn" class="btn ghost" type="button">Cancel</button>
+              <button id="switchCameraBtn" class="btn ghost hidden" type="button">Switch Camera</button>
               <button id="captureBtn" class="btn primary" type="button">Capture</button>
             </div>
           </div>
@@ -80,6 +81,25 @@
           </div>
 
           <div id="scanStatus" class="status" aria-live="polite"></div>
+
+          <details class="manual-search">
+            <summary>Can't find the right card? Search manually</summary>
+            <div class="sub-grid">
+              <label>
+                Card Name
+                <input id="manualSearchName" type="text" placeholder="e.g. Charizard" />
+              </label>
+              <label>
+                Number
+                <input id="manualSearchNumber" type="text" placeholder="e.g. 4/102" />
+              </label>
+              <label>
+                Set
+                <input id="manualSearchSet" type="text" placeholder="e.g. Base Set" />
+              </label>
+            </div>
+            <button id="manualSearchBtn" class="btn ghost small" type="button">Search</button>
+          </details>
         </div>
 
         <div id="resultPanel" class="panel hidden">
@@ -98,6 +118,12 @@
 
           <div class="score-list" id="scoreList"></div>
           <p class="muted small-caption">Condition is estimated from your photo, not verified by a grading service.</p>
+
+          <div id="candidateList" class="candidate-list hidden">
+            <h3>Other possible matches</h3>
+            <p class="muted small-caption">Confidence isn't high — tap the correct printing if this one is wrong.</p>
+            <div id="candidateCards" class="candidate-cards"></div>
+          </div>
 
           <div id="analysisValues" class="summary compact-summary"></div>
 
@@ -150,15 +176,15 @@
           <div class="row-between">
             <h3>Portfolio Snapshot</h3>
             <div class="toolbar-actions">
-              <button id="recalcPricesBtn" class="btn ghost small" type="button">Recalculate Prices</button>
-              <span id="pricesUpdatedLabel" class="badge">Not priced yet</span>
+              <button id="recalcPricesBtn" class="btn ghost small hidden" type="button">Recalculate Prices</button>
+              <span id="pricesUpdatedLabel" class="badge hidden">Not priced yet</span>
               <button id="exportDataBtn" class="btn ghost small" type="button">Export Backup</button>
               <label class="btn ghost small" for="importDataInput">Import Backup</label>
               <input id="importDataInput" type="file" accept="application/json" hidden />
               <button id="saveProfileBtn" class="btn primary small" type="button">Save Profile</button>
             </div>
           </div>
-          <p class="muted">Track value, personal profile, and binder performance in one place.</p>
+          <p class="muted">Track your collection, personal profile, and binder progress in one place.</p>
 
           <div class="profile-grid">
             <label>
@@ -314,6 +340,14 @@
         <button class="btn ghost small delete-card" type="button">Remove</button>
       </div>
     </article>
+  </template>
+
+  <template id="candidateCardTemplate">
+    <button class="candidate-card" type="button">
+      <img class="candidate-thumb" alt="Candidate card thumbnail" />
+      <span class="candidate-name"></span>
+      <span class="candidate-meta"></span>
+    </button>
   </template>
 
   <template id="newsItemTemplate">

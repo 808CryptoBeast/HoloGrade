@@ -20,9 +20,12 @@ test("upload a photo and analyze it", async ({ page }) => {
   await expect(page.locator("#previewWrap")).toBeVisible();
 
   await page.locator("#analyzeBtn").click();
+  // pokemontcg.io's free tier is visibly flaky/slow under load (seen
+  // throughout manual testing this session); give real network round trips
+  // realistic headroom rather than a tight timeout.
   await page.waitForFunction(
     () => document.getElementById("scanStatus")?.textContent?.startsWith("Analysis complete"),
-    { timeout: 40000 },
+    { timeout: 60000 },
   );
 
   await expect(page.locator("#resultPanel")).toBeVisible();
