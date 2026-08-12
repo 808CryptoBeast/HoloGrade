@@ -334,6 +334,24 @@ function assessImageQuality(imageBitmap, quality, cropDetected) {
   return warnings;
 }
 
+// Tesseract scores each recognized line's confidence (0-100) independently.
+// Verified empirically: a text crop with card-art bleeding into it produces
+// lines around confidence 20-25 for the art-noise portion, vs 80+ for
+// genuinely printed text — a clean, well-separated gap. Dropping low-
+// confidence lines here means garbage never reaches name/number extraction
+// in the first place, rather than trying to filter it back out afterward.
+const MIN_OCR_LINE_CONFIDENCE = 45;
+
+function filterConfidentText(data) {
+  const lines = Array.isArray(data?.lines) ? data.lines : null;
+  if (!lines || !lines.length) return String(data?.text || "");
+  const kept = lines.filter((line) => Number(line.confidence) >= MIN_OCR_LINE_CONFIDENCE);
+  // If Tesseract itself has low confidence in every line, that's an honest
+  // "couldn't read this," not a green light to fall back to the unfiltered
+  // (likely garbled) text.
+  return kept.map((line) => line.text).join("");
+}
+
 async function runOcr(dataUrl, fallbackDataUrl = "") {
   if (!window.Tesseract) return { text: "", nameLine: "", numberLine: "" };
   try {
@@ -360,20 +378,24 @@ async function runOcr(dataUrl, fallbackDataUrl = "") {
     if (fallbackDataUrl && fallbackDataUrl !== dataUrl) {
       const fallbackStrip = await makeTopStripDataUrl(fallbackDataUrl);
       const fallbackTop = await window.Tesseract.recognize(fallbackStrip, "eng");
-      fallbackResult = fallbackTop?.data?.text || "";
+      fallbackResult = filterConfidentText(fallbackTop?.data);
       fallbackNameLine = fallbackResult;
 
       const fallbackBottomStrip = await makeBottomStripDataUrl(fallbackDataUrl);
       const fallbackBottom = await window.Tesseract.recognize(fallbackBottomStrip, "eng");
-      fallbackNumberLine = fallbackBottom?.data?.text || "";
+      fallbackNumberLine = filterConfidentText(fallbackBottom?.data);
     }
 
-    const text = [result?.data?.text || "", topResult?.data?.text || "", bottomResult?.data?.text || "", fallbackResult]
+    const mainText = filterConfidentText(result?.data);
+    const topText = filterConfidentText(topResult?.data);
+    const bottomText = filterConfidentText(bottomResult?.data);
+
+    const text = [mainText, topText, bottomText, fallbackResult]
       .join(" ")
       .replace(/\s+/g, " ")
       .trim();
-    const nameLine = [topResult?.data?.text || "", fallbackNameLine].filter(Boolean).join("\n");
-    const numberLine = [bottomResult?.data?.text || "", fallbackNumberLine].filter(Boolean).join("\n");
+    const nameLine = [topText, fallbackNameLine].filter(Boolean).join("\n");
+    const numberLine = [bottomText, fallbackNumberLine].filter(Boolean).join("\n");
 
     return { text, nameLine, numberLine };
   } catch {
@@ -398,8 +420,49 @@ function extractNameFromNameLine(nameLine) {
   const lines = raw.split(/\n/).map((line) => line.trim()).filter(Boolean);
 
   for (const line of lines) {
-    const words = line
-      .split(/\s+/)
+    // "Evolves from X" names the PREVIOUS evolution stage, not this card —
+    // if processed like any other line it reduces to just "X" after the
+    // noiseWords filter below (evolves/from get stripped), which looks like
+    // a perfectly valid short name and gets returned immediately, before
+    // the real name on the next line is ever examined. Confirmed with a
+    // clean (non-garbled) two-line banner: "Evolves from Charmander" +
+    // "Charmeleon HP 80" was extracting "charmander" every time — a
+    // systematic bug on every Stage 1/2 card, not an OCR-quality issue.
+    // Skip the whole line as a unit rather than filtering it word-by-word.
+    if (/\bevolves?\s+from\b/i.test(line)) continue;
+
+    const rawTokens = line.split(/\s+/);
+
+    // Tesseract sometimes splits one word across a stray space (seen in
+    // practice: "Bulbasaur" read as "Bulbasau" + "r"). A 1-2 letter
+    // fragment right after a real word is essentially always the tail end
+    // of that word, not a separate token — rejoin it before the length-3
+    // filter below would otherwise silently drop it and truncate the name.
+    // Exception: HP/EX/GX/V are real, extremely common short tokens that
+    // legitimately follow the name on their own ("Bulbasaur HP 70",
+    // "Mewtwo EX", "Pikachu V") — merging those would corrupt an otherwise-
+    // correct read into a string that can't match the API's actual (space-
+    // separated) card name. "hp" in particular appears on nearly every
+    // card's name line, so missing it here broke the overwhelmingly common
+    // case, not just an edge case (caught by a full-pipeline regression
+    // check: "Bulbasaur HP 70" was being mangled into "bulbasaurhp").
+    const knownSuffixes = new Set(["hp", "ex", "gx", "v", "vmax", "vstar"]);
+    const merged = [];
+    for (const token of rawTokens) {
+      const letters = token.replace(/[^a-zA-Z]/g, "");
+      const prev = merged[merged.length - 1];
+      const prevLetters = prev ? prev.replace(/[^a-zA-Z]/g, "") : "";
+      if (
+        letters && letters.length <= 2 && !knownSuffixes.has(letters.toLowerCase()) &&
+        prev && /^[a-zA-Z'.-]+$/.test(prev) && prevLetters.length >= 3
+      ) {
+        merged[merged.length - 1] = prev + letters;
+      } else {
+        merged.push(token);
+      }
+    }
+
+    const words = merged
       .map((w) => w.replace(/[^a-zA-Z'.-]/g, ""))
       // No official Pokemon name is shorter than 3 letters ("Mew", "Muk").
       // A surviving 1-2 letter fragment is essentially always OCR noise
@@ -803,6 +866,19 @@ function saveAnalyzedCard() {
   if (!cardImage) {
     status("Add a photo, or pick a manual-search match with an official image, before saving.");
     return;
+  }
+
+  // A low-confidence match should never slide into a binder on a single,
+  // easy-to-miss tap — force an explicit "yes, I checked this" moment.
+  if (state.analysis.confidence === "low") {
+    const cardLabel = cleanText(els.editName.value) || "this card";
+    const proceed = window.confirm(
+      `Scan confidence is low for "${cardLabel}" — the match may be wrong. Save anyway?`,
+    );
+    if (!proceed) {
+      status("Save cancelled. Double-check the fields above, or try manual search.");
+      return;
+    }
   }
 
   const binderId = els.editBinder.value;
@@ -1292,7 +1368,17 @@ function makeTopStripDataUrl(dataUrl) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      const cropH = Math.max(80, Math.round(img.height * 0.27));
+      // A standard card's name/HP banner sits in roughly the top 12-15% of
+      // the card, but evolution-stage cards add an "Evolves from X" line
+      // that can push closer to 18-20%. This used to crop a flat 27%, which
+      // on a simple Basic Pokemon card reached well past the text banner
+      // into the full-color illustration below it (seen in practice: a
+      // clean, sharp Bulbasaur card still produced a garbled name because
+      // of exactly this). Erring slightly generous here rather than risking
+      // clipping evolution-stage banners is fine now that runOcr's
+      // line-confidence filter (MIN_OCR_LINE_CONFIDENCE) strips out any
+      // illustration-noise lines the extra height pulls in.
+      const cropH = Math.max(70, Math.round(img.height * 0.19));
       const canvas = document.createElement("canvas");
       canvas.width = img.width * 2;
       canvas.height = cropH * 2;
