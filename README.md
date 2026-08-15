@@ -6,7 +6,7 @@ A lightweight Pokemon card scanner and binder manager with:
 - Auto condition estimate (centering, corners, edges, surface + overall grade)
 - OCR-assisted card identification + Pokemon TCG API lookup
 - Binder organization with customizable binder styles
-- Binder-like 3x3 sleeve display
+- Binder-like 4x5 sleeve display
 - Local persistence with `localStorage`
 
 ## Run It

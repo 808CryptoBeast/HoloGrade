@@ -547,7 +547,7 @@ select {
 .binder-book-grid {
   height: 100%;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   padding: 8px;
   position: relative;
@@ -682,7 +682,7 @@ select {
 
 .editor-slot-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
 }
 
@@ -890,7 +890,7 @@ select {
 
 .binder-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, calc(160px * var(--slot-scale, 0.86))));
+  grid-template-columns: repeat(4, minmax(0, calc(160px * var(--slot-scale, 0.86))));
   justify-content: center;
   gap: var(--slot-gap, 8px);
   padding: 10px;
@@ -1472,7 +1472,7 @@ select {
 .panel-layout-editor {
   margin-top: 10px;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
   min-height: 220px;
   padding: 10px;
@@ -1933,7 +1933,7 @@ select {
   }
 
   .binder-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     justify-content: stretch;
   }
 

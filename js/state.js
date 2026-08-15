@@ -5,6 +5,10 @@ const CONDITION_ESTIMATE_TOOLTIP = "Estimated from your photo's visible centerin
 
 const APP_THEMES = ["theme-coast", "theme-cinder", "theme-forest", "theme-plasma"];
 
+const BINDER_GRID_COLS = 4;
+const BINDER_GRID_ROWS = 5;
+const BINDER_GRID_SLOTS = BINDER_GRID_COLS * BINDER_GRID_ROWS;
+
 const BINDER_STYLES = {
   ocean: ["#58d0ff", "#6effd4"],
   lava: ["#ffb36a", "#ff6f88"],
@@ -34,18 +38,18 @@ const PAGE_LAYOUT_PRESETS = {
   },
   middleHero: {
     label: "Middle Hero",
-    panels: [{ anchor: 4, colSpan: 2, rowSpan: 1, title: "Scene Art" }],
+    panels: [{ anchor: 10, colSpan: 2, rowSpan: 1, title: "Scene Art" }],
   },
   tallStory: {
     label: "Tall Story",
-    panels: [{ anchor: 3, colSpan: 1, rowSpan: 2, title: "Vertical Art" }],
+    panels: [{ anchor: 5, colSpan: 1, rowSpan: 2, title: "Vertical Art" }],
   },
 };
 
 const SCENE_PANEL_TEMPLATES = {
   wide: { label: "Wide Panel", colSpan: 2, rowSpan: 1, anchor: 2, title: "Scene Art" },
   tall: { label: "Tall Panel", colSpan: 1, rowSpan: 2, anchor: 3, title: "Vertical Art" },
-  square: { label: "Square Panel", colSpan: 1, rowSpan: 1, anchor: 5, title: "Detail Art" },
+  square: { label: "Square Panel", colSpan: 1, rowSpan: 1, anchor: 6, title: "Detail Art" },
 };
 
 const STICKER_PRESETS = {

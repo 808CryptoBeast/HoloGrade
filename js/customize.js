@@ -63,13 +63,13 @@ function renderBinderManager() {
           <label>
             Width (cards)
             <select data-action="panel-width" data-panel-id="${panel.id}">
-              ${[1, 2, 3].map((value) => `<option value="${value}" ${Number(panel.colSpan || 1) === value ? "selected" : ""}>${value}</option>`).join("")}
+              ${Array.from({ length: BINDER_GRID_COLS }, (_, i) => i + 1).map((value) => `<option value="${value}" ${Number(panel.colSpan || 1) === value ? "selected" : ""}>${value}</option>`).join("")}
             </select>
           </label>
           <label>
             Height (cards)
             <select data-action="panel-height" data-panel-id="${panel.id}">
-              ${[1, 2, 3].map((value) => `<option value="${value}" ${Number(panel.rowSpan || 1) === value ? "selected" : ""}>${value}</option>`).join("")}
+              ${Array.from({ length: BINDER_GRID_ROWS }, (_, i) => i + 1).map((value) => `<option value="${value}" ${Number(panel.rowSpan || 1) === value ? "selected" : ""}>${value}</option>`).join("")}
             </select>
           </label>
         </div>
@@ -690,7 +690,7 @@ function renderBinderManager() {
       const failures = [];
 
       for (const file of files) {
-        if (getReservedSlotsForTheme(theme).size >= 9) {
+        if (getReservedSlotsForTheme(theme).size >= BINDER_GRID_SLOTS) {
           failures.push(`"${file.name}" skipped (page is full).`);
           continue;
         }
@@ -799,7 +799,7 @@ function renderBinderManager() {
       select.addEventListener("change", () => {
         const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
         const theme = upsertPageTheme(binder, page);
-        const nextWidth = clamp(Number(select.value) || 1, 1, 3);
+        const nextWidth = clamp(Number(select.value) || 1, 1, BINDER_GRID_COLS);
         const current = theme.scenePanels.find((panel) => panel.id === select.dataset.panelId);
         if (!current) return;
         theme.scenePanels = resizePanelWithAutoAnchor(theme, select.dataset.panelId, nextWidth, Number(current.rowSpan || 1));
@@ -814,7 +814,7 @@ function renderBinderManager() {
       select.addEventListener("change", () => {
         const page = clamp(Number(themePageSelect.value) || 1, 1, maxPages);
         const theme = upsertPageTheme(binder, page);
-        const nextHeight = clamp(Number(select.value) || 1, 1, 3);
+        const nextHeight = clamp(Number(select.value) || 1, 1, BINDER_GRID_ROWS);
         const current = theme.scenePanels.find((panel) => panel.id === select.dataset.panelId);
         if (!current) return;
         theme.scenePanels = resizePanelWithAutoAnchor(theme, select.dataset.panelId, Number(current.colSpan || 1), nextHeight);

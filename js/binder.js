@@ -248,8 +248,8 @@ function renderCollection() {
     renderPageDecorations(grid, binder, currentPage);
 
     const reservedSlots = getReservedSlotsForTheme(pageTheme);
-    const placedCards = allCardsOnPage.filter((card) => Number(card.slotOrder) >= 1 && Number(card.slotOrder) <= 9);
-    for (let i = 0; i < 9; i += 1) {
+    const placedCards = allCardsOnPage.filter((card) => Number(card.slotOrder) >= 1 && Number(card.slotOrder) <= BINDER_GRID_SLOTS);
+    for (let i = 0; i < BINDER_GRID_SLOTS; i += 1) {
       const slotNumber = i + 1;
       if (renderPageLayoutItem(grid, slotNumber, pageTheme)) {
         continue;
@@ -615,7 +615,7 @@ function renderBinderBookGrid(target, cards, page, binder) {
   renderPageScenePanels(target, pageTheme, { mode: "book" });
   renderPageDecorations(target, binder, page);
   const reservedSlots = getReservedSlotsForTheme(pageTheme);
-  for (let slotNumber = 1; slotNumber <= 9; slotNumber += 1) {
+  for (let slotNumber = 1; slotNumber <= BINDER_GRID_SLOTS; slotNumber += 1) {
     if (reservedSlots.has(slotNumber)) continue;
     const card = cards.find((item) => Number(item.slotOrder || 0) === slotNumber);
     const slot = document.createElement("div");
@@ -679,8 +679,8 @@ function applyCardSizePresetToPage(binder, page, presetKey) {
 }
 
 function resizePanelWithAutoAnchor(theme, panelId, nextColSpan, nextRowSpan) {
-  const colSpan = clamp(Number(nextColSpan) || 1, 1, 3);
-  const rowSpan = clamp(Number(nextRowSpan) || 1, 1, 3);
+  const colSpan = clamp(Number(nextColSpan) || 1, 1, BINDER_GRID_COLS);
+  const rowSpan = clamp(Number(nextRowSpan) || 1, 1, BINDER_GRID_ROWS);
   return theme.scenePanels.map((panel) => {
     if (panel.id !== panelId) return panel;
     const shape = { ...panel, colSpan, rowSpan };
@@ -731,7 +731,7 @@ function moveCardWithSlotShift(cardId, binderId, page, targetSlot) {
   const safePage = clamp(Number(page) || 1, 1, Math.max(1, Number(binder.pages || 1)));
   const theme = getPageTheme(binder, safePage);
   const availableSlots = getAvailableSlotsForTheme(theme);
-  const target = clamp(Number(targetSlot) || 1, 1, 9);
+  const target = clamp(Number(targetSlot) || 1, 1, BINDER_GRID_SLOTS);
   if (!availableSlots.includes(target)) {
     status("That slot is reserved by the current page art layout.");
     return false;
@@ -873,9 +873,9 @@ function matchesPanelTemplate(panel, template) {
 function createScenePanelFromTemplate(template, theme = {}) {
   const base = {
     id: cryptoRandom(),
-    anchor: clamp(Number(template?.anchor) || 1, 1, 9),
-    colSpan: clamp(Number(template?.colSpan) || 1, 1, 3),
-    rowSpan: clamp(Number(template?.rowSpan) || 1, 1, 3),
+    anchor: clamp(Number(template?.anchor) || 1, 1, BINDER_GRID_SLOTS),
+    colSpan: clamp(Number(template?.colSpan) || 1, 1, BINDER_GRID_COLS),
+    rowSpan: clamp(Number(template?.rowSpan) || 1, 1, BINDER_GRID_ROWS),
     title: cleanText(template?.title) || cleanText(theme.designTitle) || "Scene Art",
     image: "",
     video: "",
@@ -906,10 +906,10 @@ function normalizeScenePanels(scenePanels, legacy = {}) {
 }
 
 function findNearestPanelAnchorInGrid(existingPanels, preferredAnchor, colSpan, rowSpan) {
-  const preferred = clamp(Number(preferredAnchor) || 1, 1, 9);
-  const safeColSpan = clamp(Number(colSpan) || 1, 1, 3);
-  const safeRowSpan = clamp(Number(rowSpan) || 1, 1, 3);
-  const candidates = Array.from({ length: 9 }, (_, index) => index + 1)
+  const preferred = clamp(Number(preferredAnchor) || 1, 1, BINDER_GRID_SLOTS);
+  const safeColSpan = clamp(Number(colSpan) || 1, 1, BINDER_GRID_COLS);
+  const safeRowSpan = clamp(Number(rowSpan) || 1, 1, BINDER_GRID_ROWS);
+  const candidates = Array.from({ length: BINDER_GRID_SLOTS }, (_, index) => index + 1)
     .sort((a, b) => Math.abs(a - preferred) - Math.abs(b - preferred));
 
   for (const anchor of candidates) {
@@ -923,12 +923,12 @@ function findNearestPanelAnchorInGrid(existingPanels, preferredAnchor, colSpan, 
 }
 
 function getPanelGridPlacement(panel) {
-  const colSpan = clamp(Number(panel?.colSpan) || 1, 1, 3);
-  const rowSpan = clamp(Number(panel?.rowSpan) || 1, 1, 3);
-  const rawColStart = ((clamp(Number(panel?.anchor) || 1, 1, 9) - 1) % 3) + 1;
-  const rawRowStart = Math.ceil(clamp(Number(panel?.anchor) || 1, 1, 9) / 3);
-  const colStart = clamp(rawColStart, 1, 4 - colSpan);
-  const rowStart = clamp(rawRowStart, 1, 4 - rowSpan);
+  const colSpan = clamp(Number(panel?.colSpan) || 1, 1, BINDER_GRID_COLS);
+  const rowSpan = clamp(Number(panel?.rowSpan) || 1, 1, BINDER_GRID_ROWS);
+  const rawColStart = ((clamp(Number(panel?.anchor) || 1, 1, BINDER_GRID_SLOTS) - 1) % BINDER_GRID_COLS) + 1;
+  const rawRowStart = Math.ceil(clamp(Number(panel?.anchor) || 1, 1, BINDER_GRID_SLOTS) / BINDER_GRID_COLS);
+  const colStart = clamp(rawColStart, 1, BINDER_GRID_COLS + 1 - colSpan);
+  const rowStart = clamp(rawRowStart, 1, BINDER_GRID_ROWS + 1 - rowSpan);
   return {
     colStart,
     rowStart,
@@ -954,9 +954,9 @@ function normalizeScenePanel(panel, index) {
   if (!panel || typeof panel !== "object") return null;
   const normalized = {
     id: cleanText(panel.id) || `panel-${index}-${Math.floor(Math.random() * 1e6)}`,
-    anchor: clamp(Number(panel.anchor) || 1, 1, 9),
-    colSpan: clamp(Number(panel.colSpan) || 1, 1, 3),
-    rowSpan: clamp(Number(panel.rowSpan) || 1, 1, 3),
+    anchor: clamp(Number(panel.anchor) || 1, 1, BINDER_GRID_SLOTS),
+    colSpan: clamp(Number(panel.colSpan) || 1, 1, BINDER_GRID_COLS),
+    rowSpan: clamp(Number(panel.rowSpan) || 1, 1, BINDER_GRID_ROWS),
     title: cleanText(panel.title) || "Scene Art",
     image: cleanText(panel.image),
     video: cleanText(panel.video),
@@ -983,16 +983,16 @@ function isPanelPlacementValid(existingPanels, panel, panelIdToIgnore = null) {
 
 function findNearestValidPanelAnchor(theme, panelId, preferredAnchor, template) {
   const existing = normalizeScenePanels(theme?.scenePanels, theme).filter((panel) => panel.id !== panelId);
-  const preferred = clamp(Number(preferredAnchor) || 1, 1, 9);
-  const candidates = Array.from({ length: 9 }, (_, index) => index + 1)
+  const preferred = clamp(Number(preferredAnchor) || 1, 1, BINDER_GRID_SLOTS);
+  const candidates = Array.from({ length: BINDER_GRID_SLOTS }, (_, index) => index + 1)
     .sort((a, b) => Math.abs(a - preferred) - Math.abs(b - preferred));
 
   for (const anchor of candidates) {
     const candidate = {
       ...template,
       anchor,
-      colSpan: clamp(Number(template?.colSpan) || 1, 1, 3),
-      rowSpan: clamp(Number(template?.rowSpan) || 1, 1, 3),
+      colSpan: clamp(Number(template?.colSpan) || 1, 1, BINDER_GRID_COLS),
+      rowSpan: clamp(Number(template?.rowSpan) || 1, 1, BINDER_GRID_ROWS),
     };
     if (isPanelPlacementValid(existing, candidate)) {
       return anchor;
@@ -1005,14 +1005,14 @@ function findNearestValidPanelAnchor(theme, panelId, preferredAnchor, template) 
 function getPanelCoveredSlots(panel) {
   const covered = [];
   const anchor = Number(panel.anchor || 1);
-  const startRow = Math.ceil(anchor / 3);
-  const startCol = ((anchor - 1) % 3) + 1;
+  const startRow = Math.ceil(anchor / BINDER_GRID_COLS);
+  const startCol = ((anchor - 1) % BINDER_GRID_COLS) + 1;
   for (let rowOffset = 0; rowOffset < Number(panel.rowSpan || 1); rowOffset += 1) {
     for (let colOffset = 0; colOffset < Number(panel.colSpan || 1); colOffset += 1) {
       const row = startRow + rowOffset;
       const col = startCol + colOffset;
-      if (row < 1 || row > 3 || col < 1 || col > 3) continue;
-      covered.push((row - 1) * 3 + col);
+      if (row < 1 || row > BINDER_GRID_ROWS || col < 1 || col > BINDER_GRID_COLS) continue;
+      covered.push((row - 1) * BINDER_GRID_COLS + col);
     }
   }
   return covered;
@@ -1024,7 +1024,7 @@ function getReservedSlotsForTheme(theme) {
 
 function getAvailableSlotsForTheme(theme) {
   const reserved = getReservedSlotsForTheme(theme);
-  return Array.from({ length: 9 }, (_, index) => index + 1).filter((slot) => !reserved.has(slot));
+  return Array.from({ length: BINDER_GRID_SLOTS }, (_, index) => index + 1).filter((slot) => !reserved.has(slot));
 }
 
 function renderPageLayoutItem(grid, slotNumber, pageTheme) {
@@ -1106,7 +1106,7 @@ function renderPanelLayoutEditor(target, binder, page) {
   const theme = getPageTheme(binder, page);
   target.innerHTML = "";
 
-  for (let slot = 1; slot <= 9; slot += 1) {
+  for (let slot = 1; slot <= BINDER_GRID_SLOTS; slot += 1) {
     const cell = document.createElement("div");
     cell.className = "panel-layout-cell";
     cell.textContent = String(slot);
@@ -1199,9 +1199,9 @@ function startScenePanelDrag(event, editor, binderId, page, panelId) {
 }
 
 function anchorFromPoint(rect, clientX, clientY) {
-  const col = clamp(Math.floor(((clientX - rect.left) / rect.width) * 3) + 1, 1, 3);
-  const row = clamp(Math.floor(((clientY - rect.top) / rect.height) * 3) + 1, 1, 3);
-  return (row - 1) * 3 + col;
+  const col = clamp(Math.floor(((clientX - rect.left) / rect.width) * BINDER_GRID_COLS) + 1, 1, BINDER_GRID_COLS);
+  const row = clamp(Math.floor(((clientY - rect.top) / rect.height) * BINDER_GRID_ROWS) + 1, 1, BINDER_GRID_ROWS);
+  return (row - 1) * BINDER_GRID_COLS + col;
 }
 
 function moveScenePanelToAnchor(binderId, page, panelId, preferredAnchor) {
@@ -1281,19 +1281,19 @@ function startScenePanelResize(event, editor, binderId, page, panelId) {
 
   const onMove = (moveEvent) => {
     if (!runtime.panelDrag || runtime.panelDrag.pointerId !== moveEvent.pointerId) return;
-    const col = clamp(Math.floor(((moveEvent.clientX - rect.left) / rect.width) * 3) + 1, 1, 3);
-    const row = clamp(Math.floor(((moveEvent.clientY - rect.top) / rect.height) * 3) + 1, 1, 3);
-    const startCol = ((panel.anchor - 1) % 3) + 1;
-    const startRow = Math.ceil(panel.anchor / 3);
-    const candidateColSpan = clamp(col - startCol + 1, 1, 3);
-    const candidateRowSpan = clamp(row - startRow + 1, 1, 3);
+    const col = clamp(Math.floor(((moveEvent.clientX - rect.left) / rect.width) * BINDER_GRID_COLS) + 1, 1, BINDER_GRID_COLS);
+    const row = clamp(Math.floor(((moveEvent.clientY - rect.top) / rect.height) * BINDER_GRID_ROWS) + 1, 1, BINDER_GRID_ROWS);
+    const startCol = ((panel.anchor - 1) % BINDER_GRID_COLS) + 1;
+    const startRow = Math.ceil(panel.anchor / BINDER_GRID_COLS);
+    const candidateColSpan = clamp(col - startCol + 1, 1, BINDER_GRID_COLS);
+    const candidateRowSpan = clamp(row - startRow + 1, 1, BINDER_GRID_ROWS);
     const candidate = { ...panel, colSpan: candidateColSpan, rowSpan: candidateRowSpan };
     if (!isPanelPlacementValid(theme.scenePanels, candidate, panelId)) return;
     nextColSpan = candidateColSpan;
     nextRowSpan = candidateRowSpan;
-    node.parentElement.style.gridTemplateColumns = "repeat(3, 1fr)";
-    node.style.gridColumn = `${((panel.anchor - 1) % 3) + 1} / span ${nextColSpan}`;
-    node.style.gridRow = `${Math.ceil(panel.anchor / 3)} / span ${nextRowSpan}`;
+    node.parentElement.style.gridTemplateColumns = `repeat(${BINDER_GRID_COLS}, 1fr)`;
+    node.style.gridColumn = `${((panel.anchor - 1) % BINDER_GRID_COLS) + 1} / span ${nextColSpan}`;
+    node.style.gridRow = `${Math.ceil(panel.anchor / BINDER_GRID_COLS)} / span ${nextRowSpan}`;
   };
 
   const onEnd = (endEvent) => {
@@ -1713,7 +1713,7 @@ function renderBinderEditor() {
   els.editorSlotGrid.innerHTML = "";
   const pageTheme = getPageTheme(binder, page);
   const reservedSlots = getReservedSlotsForTheme(pageTheme);
-  for (let slotNumber = 1; slotNumber <= 9; slotNumber += 1) {
+  for (let slotNumber = 1; slotNumber <= BINDER_GRID_SLOTS; slotNumber += 1) {
     if (renderPageLayoutItem(els.editorSlotGrid, slotNumber, pageTheme)) {
       continue;
     }
@@ -1842,13 +1842,15 @@ function countCardsInPage(binderId, page) {
 
 function getPageCapacity(binderId, page) {
   const binder = state.binders.find((item) => item.id === binderId);
-  if (!binder) return 9;
+  if (!binder) return BINDER_GRID_SLOTS;
   return getAvailableSlotsForTheme(getPageTheme(binder, page)).length;
 }
 
 function getNextSlotOrder(binderId, page) {
   const binder = state.binders.find((item) => item.id === binderId);
-  const available = binder ? getAvailableSlotsForTheme(getPageTheme(binder, page)) : [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  const available = binder
+    ? getAvailableSlotsForTheme(getPageTheme(binder, page))
+    : Array.from({ length: BINDER_GRID_SLOTS }, (_, index) => index + 1);
   const taken = new Set(
     state.cards
       .filter((card) => card.binderId === binderId && Number(card.page || 1) === page)
@@ -1857,7 +1859,7 @@ function getNextSlotOrder(binderId, page) {
   for (const slot of available) {
     if (!taken.has(slot)) return slot;
   }
-  return available[available.length - 1] || 9;
+  return available[available.length - 1] || BINDER_GRID_SLOTS;
 }
 
 function getViewedPage(binderId, maxPage) {
@@ -1891,7 +1893,7 @@ function placeCardInSlot(cardId, binderId, page, slotNumber) {
   const currentBinderId = moved.binderId;
   const currentPage = Number(moved.page || 1);
   const currentSlot = Number(moved.slotOrder || 0);
-  const targetSlot = clamp(Number(slotNumber) || 1, 1, 9);
+  const targetSlot = clamp(Number(slotNumber) || 1, 1, BINDER_GRID_SLOTS);
   const binder = state.binders.find((item) => item.id === binderId);
   if (binder && getReservedSlotsForTheme(getPageTheme(binder, page)).has(targetSlot)) {
     status("That slot is reserved for page artwork in the current layout.");
