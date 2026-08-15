@@ -23,6 +23,14 @@ function extractCardValues(card) {
     Number(cardmarket?.avg1 || 0),
     Number(cardmarket?.avg7 || 0),
     Number(cardmarket?.avg30 || 0),
+    // Verified live: TCGdex genuinely has separate "-holo" priced fields
+    // (e.g. a card can show avg: 2.74 but trend-holo: 13.83) — skipping
+    // these understated the value of holo prints entirely.
+    Number(cardmarket?.["avg-holo"] || 0),
+    Number(cardmarket?.["trend-holo"] || 0),
+    Number(cardmarket?.["avg1-holo"] || 0),
+    Number(cardmarket?.["avg7-holo"] || 0),
+    Number(cardmarket?.["avg30-holo"] || 0),
   ].filter((value) => Number.isFinite(value) && value > 0);
 
   const tcgBest = tcgValues.length ? Math.max(...tcgValues) : 0;
@@ -93,10 +101,14 @@ function extractAutoCardData(card) {
     flavorText: cleanText(card.description),
     regulationMark: "",
     rules: [],
+    // Verified live: card.legal.standard/expanded are real booleans, not
+    // strings — String(bool) would have produced the literal text
+    // "true"/"false" as if it were a status label, which is exactly what
+    // this maps to a readable one instead.
     legalities: card.legal && typeof card.legal === "object" ? {
       unlimited: "",
-      expanded: cleanText(String(card.legal.expanded ?? "")),
-      standard: cleanText(String(card.legal.standard ?? "")),
+      expanded: card.legal.expanded ? "Legal" : "Not Legal",
+      standard: card.legal.standard ? "Legal" : "Not Legal",
     } : {},
     nationalPokedexNumbers: Array.isArray(card.dexId)
       ? card.dexId.filter((n) => Number.isFinite(Number(n))).map((n) => Number(n))
@@ -207,7 +219,13 @@ async function fetchCardValuesForExistingCard(card) {
     }
 
     const hintedNumber = normalizeCollectorNumber(card.number);
-    const briefs = await tcgdexSearchCards({ name: cleanText(card.name), localId: hintedNumber });
+    const cardName = cleanText(card.name);
+    // Without at least a name or number, tcgdexSearchCards({}) would send an
+    // unfiltered query and return the entire card list — mirrors the same
+    // guard identifyCard uses before searching at all.
+    if (!cardName && !hintedNumber) return null;
+
+    const briefs = await tcgdexSearchCards({ name: cardName, localId: hintedNumber });
     if (!briefs.length) return null;
 
     const shortlist = coarseRankBriefCandidates(briefs, card.name, hintedNumber).slice(0, 5);
@@ -217,10 +235,13 @@ async function fetchCardValuesForExistingCard(card) {
     if (!fullCards.length) return null;
 
     const ocrLike = `${card.name || ""} ${card.set || ""} ${card.number || ""}`.toLowerCase();
-    const best = fullCards
+    const scored = fullCards
       .map((row) => ({ row, score: scoreCardMatch(row, ocrLike, { number: card.number, hp: card.hp }) }))
-      .sort((a, b) => b.score - a.score)[0]?.row;
-    if (!best) return null;
+      .sort((a, b) => b.score - a.score);
+    const best = scored[0]?.row;
+    // Same floor as identifyCard: a weak/coincidental match shouldn't
+    // silently overwrite this card's stored price with an unrelated card's.
+    if (!best || Number(scored[0]?.score || 0) < 20) return null;
     return extractCardValues(best);
   } catch {
     return null;
